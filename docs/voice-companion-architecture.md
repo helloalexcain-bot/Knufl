@@ -20,6 +20,7 @@ phone browser
 ## Trust boundaries
 
 - The Worker resolves the authenticated user from the bearer token. Tool arguments never contain or choose an owner ID.
+- A central privileged-request guard also requires the verified owner on every service-role row, filter or RPC argument. Live integration tests attack the authenticated Worker paths as well as testing RLS independently.
 - Supabase RLS repeats the ownership check at every exposed read and RPC boundary, including parent/child records. Authenticated browsers cannot mutate workout-domain tables directly; after validating the bearer, the Worker uses its service credential only for explicitly owner-filtered table writes. Profile, preferences and editable-memory writes remain owner-scoped browser operations under RLS.
 - Mutations use stable operation IDs. Replayed requests return the existing result rather than creating duplicate sets, timers or exercise-day credit.
 - OpenAI receives server-owned character instructions and typed tool declarations. It interprets speech; application tools validate and persist facts.
@@ -30,6 +31,8 @@ phone browser
 ## Persistence and recovery
 
 Authenticated data is cloud-backed. The UI keeps only an account-namespaced pending-operation queue (`knufl.voice.pending.v1::<account-id>`) for retrying confirmed manual or voice actions after a connection failure. Signing out clears the active in-memory view and cannot expose another account's cache.
+
+Returning focus, becoming visible or coming back online refreshes the account-scoped context from cloud storage. Rest countdowns recover from their saved absolute deadlines; this is not realtime multi-device streaming.
 
 The static prototype continues to export `knufl.progress.v1` JSON on the old origin. Its separate `pages/index.html` entry imports `app/legacy-prototype.tsx`, so the Cloudflare page cannot replace the GitHub Pages experience by accident. A new-origin import is explicit: select that file, preview counts/name, then confirm. Legacy identity fields are discarded; IDs, sessions, memories and permanent milestone unlocks are retained. Import batches and source IDs make retries idempotent, and existing cloud records are not silently overwritten.
 
@@ -48,7 +51,7 @@ See [character-rig-contract.md](./character-rig-contract.md) for the missing pro
 - Provider secrets are supplied through the hosting environment. `.env.example` lists names only.
 - Apple/Google buttons appear only when both the Supabase project and the corresponding provider flag are configured.
 - Realtime connects muted; the user explicitly unmutes or holds push-to-talk after the processing disclosure.
-- The browser closes a voice session at the server-issued expiry and the ledger reserves that budget. Strict provider-side forced hangup at the deadline still needs a scheduled/queued Worker or Durable Object and is not claimed in this stage.
+- The browser closes at its server-issued expiry as a UX safeguard. Independently, Supabase Cron sweeps a private durable outbox every second and calls OpenAI's hangup endpoint using a Vault-held key. No request-scoped Worker or browser timer is responsible for enforcement. A stale/missing supervisor blocks new sessions. Failed hangups retry without releasing budget or concurrency; outstanding cleanup survives account deletion. The private `http` transport keeps credential headers out of pg_net's platform-owned shared queue; calls are bounded to two seconds each, five per sweep. Vault/private functions are denied to browser roles. Deadline enforcement is best-effort to scheduler/provider latency, not a hard-real-time guarantee during outages; live OpenAI verification is a separate gate.
 
 ## Native boundary
 

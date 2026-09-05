@@ -2,6 +2,7 @@ import { privacyPreservingUserId, type AuthContext } from './auth.ts';
 import { type KnuflServerConfig } from './config.ts';
 import { REALTIME_TOOL_DEFINITIONS } from './contracts.ts';
 import { ApiError } from './errors.ts';
+import { readBoundedText } from './body.ts';
 import { encodeFilter, supabaseRequest, type SupabaseClientContext } from './supabase.ts';
 
 export interface RealtimeDependencies {
@@ -44,6 +45,7 @@ const voiceLedgerDbFor = (context: RealtimeContext): SupabaseClientContext => ({
   config: context.config,
   bearerToken: context.config.supabaseServiceRoleKey,
   apiKey: context.config.supabaseServiceRoleKey,
+  trustedOwnerId: context.auth.user.id,
   fetcher: context.dependencies?.fetcher,
 });
 
@@ -54,11 +56,7 @@ const readProviderText = async (response: Response, maximumBytes: number): Promi
   if (contentLength && Number.parseInt(contentLength, 10) > maximumBytes) {
     throw new ApiError(502, 'provider_error', 'The voice provider returned an oversized response.');
   }
-  const text = await response.text();
-  if (new TextEncoder().encode(text).byteLength > maximumBytes) {
-    throw new ApiError(502, 'provider_error', 'The voice provider returned an oversized response.');
-  }
-  return text;
+  return readBoundedText(response, maximumBytes);
 };
 
 const firstRow = <T>(value: unknown): T | undefined =>
@@ -87,6 +85,9 @@ export const claimRealtimeBudget = async (
     throw new ApiError(503, 'provider_error', 'The voice budget could not be verified.');
   }
   if (!claim.allowed || !claim.expires_at) {
+    if (claim.reason === 'supervisor_unavailable') {
+      throw new ApiError(503, 'not_configured', 'Voice is unavailable until its server supervision is healthy.');
+    }
     const message = claim.reason === 'concurrent_limit'
       ? 'A voice session is already active for this account.'
       : claim.reason === 'daily_budget_exhausted'
@@ -125,14 +126,21 @@ const attachOpenAiCall = async (
 const closeLedger = async (
   context: RealtimeContext,
   voiceSessionId: string,
+  callId: string | null = null,
 ): Promise<unknown> =>
   supabaseRequest<unknown>(voiceLedgerDbFor(context), '/rest/v1/rpc/close_voice_session_for_user', {
     method: 'POST',
     body: {
       p_user_id: context.auth.user.id,
       p_session_id: voiceSessionId,
-      p_openai_call_id: null,
+      p_openai_call_id: callId,
     },
+  });
+
+const requestServerClose = (context: RealtimeContext, voiceSessionId: string): Promise<boolean> =>
+  supabaseRequest<boolean>(voiceLedgerDbFor(context), '/rest/v1/rpc/request_voice_close_for_user', {
+    method: 'POST',
+    body: { p_user_id: context.auth.user.id, p_session_id: voiceSessionId },
   });
 
 const companionName = async (context: RealtimeContext): Promise<string> => {
@@ -231,6 +239,7 @@ export const createRealtimeCall = async (
   const voiceSessionId = context.dependencies?.randomUuid?.() ?? crypto.randomUUID();
   const claim = await claimRealtimeBudget(context, voiceSessionId);
   let createdCallId: string | undefined;
+  let providerMayHaveCreatedCall = false;
   try {
     const name = await companionName(context);
     const safetyIdentifier = await privacyPreservingUserId(context.auth.user.id);
@@ -246,6 +255,7 @@ export const createRealtimeCall = async (
 
     let response: Response;
     try {
+      providerMayHaveCreatedCall = true;
       response = await fetcherFor(context)(OPENAI_REALTIME_CALLS_URL, {
         method: 'POST',
         headers: {
@@ -254,12 +264,14 @@ export const createRealtimeCall = async (
           'X-Client-Request-Id': requestId,
         },
         body: form,
+        signal: AbortSignal.timeout(20_000),
       });
     } catch {
       throw new ApiError(503, 'provider_error', 'The voice provider is temporarily unavailable.');
     }
 
     if (!response.ok) {
+      providerMayHaveCreatedCall = false;
       const providerRequestId = response.headers.get('x-request-id');
       console.error(JSON.stringify({
         event: 'openai_realtime_call_failed',
@@ -275,15 +287,17 @@ export const createRealtimeCall = async (
           : 'The voice connection could not be established.',
       );
     }
-    const answerSdp = await readProviderText(response, MAX_OPENAI_SDP_BYTES);
-    if (!answerSdp.startsWith('v=0')) {
-      throw new ApiError(502, 'provider_error', 'The voice provider returned an invalid connection answer.');
-    }
+    // Persist the remote identity before parsing its body, so malformed SDP and
+    // disconnected requests still have a durable server-side cleanup path.
     createdCallId = extractCallId(response.headers.get('location'));
     if (!createdCallId) {
       throw new ApiError(502, 'provider_error', 'The voice provider did not return a controllable call ID.');
     }
     await attachOpenAiCall(context, voiceSessionId, createdCallId);
+    const answerSdp = await readProviderText(response, MAX_OPENAI_SDP_BYTES);
+    if (!answerSdp.startsWith('v=0')) {
+      throw new ApiError(502, 'provider_error', 'The voice provider returned an invalid connection answer.');
+    }
     return {
       answerSdp,
       voiceSessionId,
@@ -291,9 +305,14 @@ export const createRealtimeCall = async (
     };
   } catch (error) {
     if (createdCallId) {
-      await hangupOpenAiCall(context, createdCallId, requestId).catch(() => undefined);
+      await requestServerClose(context, voiceSessionId).catch(() => undefined);
+      const hungUp = await hangupOpenAiCall(context, createdCallId, requestId);
+      if (hungUp) await closeLedger(context, voiceSessionId, createdCallId).catch(() => undefined);
+    } else if (!providerMayHaveCreatedCall) {
+      await closeLedger(context, voiceSessionId).catch(() => undefined);
     }
-    await closeLedger(context, voiceSessionId).catch(() => undefined);
+    // An uncertain remote-create result must not release budget for unlimited
+    // retries. Keep its reservation blocked for operator reconciliation.
     throw error;
   }
 };
@@ -314,6 +333,7 @@ const hangupOpenAiCall = async (
           Authorization: `Bearer ${context.config.openAiApiKey}`,
           'X-Client-Request-Id': requestId,
         },
+        signal: AbortSignal.timeout(5_000),
       },
     );
   } catch {
@@ -336,8 +356,16 @@ export const closeRealtimeCall = async (
   const usage = firstRow<Record<string, unknown>>(payload);
   if (!usage) throw new ApiError(404, 'not_found', 'That voice session was not found.');
   const callId = typeof usage.openai_call_id === 'string' ? usage.openai_call_id : undefined;
+  if (usage.status !== 'active') return { closed: true, providerHungUp: true };
+  if (!callId) {
+    // Creation may still be running on another request. The browser cannot
+    // clear that reservation while the provider result is unknown.
+    return { closed: false, providerHungUp: false, pending: true };
+  }
+  await requestServerClose(context, voiceSessionId);
   const providerHungUp = callId ? await hangupOpenAiCall(context, callId, requestId) : false;
-  const ledger = await closeLedger(context, voiceSessionId);
+  if (!providerHungUp) return { closed: false, providerHungUp: false, pending: true };
+  const ledger = await closeLedger(context, voiceSessionId, callId);
   return { closed: true, providerHungUp, usage: firstRow(ledger) ?? ledger };
 };
 

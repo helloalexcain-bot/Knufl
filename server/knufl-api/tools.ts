@@ -88,6 +88,7 @@ const writeDbFor = (context: ToolExecutionContext): SupabaseClientContext => ({
   config: context.config,
   bearerToken: context.config.supabaseServiceRoleKey,
   apiKey: context.config.supabaseServiceRoleKey,
+  trustedOwnerId: context.auth.user.id,
   fetcher: context.dependencies?.fetcher,
 });
 

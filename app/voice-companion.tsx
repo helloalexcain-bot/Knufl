@@ -618,6 +618,24 @@ export default function VoiceCompanionApp() {
   }, [mode, profileReady, refreshContext]);
 
   useEffect(() => {
+    if (mode !== 'cloud' || !profileReady) return;
+    let running = false;
+    const recover = () => {
+      if (document.visibilityState !== 'visible' || running) return;
+      running = true;
+      void refreshContext().catch(() => undefined).finally(() => { running = false; });
+    };
+    window.addEventListener('focus', recover);
+    window.addEventListener('online', recover);
+    document.addEventListener('visibilitychange', recover);
+    return () => {
+      window.removeEventListener('focus', recover);
+      window.removeEventListener('online', recover);
+      document.removeEventListener('visibilitychange', recover);
+    };
+  }, [mode, profileReady, refreshContext]);
+
+  useEffect(() => {
     const timer = restTimerFrom(context);
     const endsAt = stringValue(timer, 'endsAt', 'ends_at') || stringValue(toolResult?.data, 'endsAt', 'ends_at');
     if (!endsAt) return;

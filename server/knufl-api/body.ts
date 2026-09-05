@@ -2,7 +2,7 @@ import { ApiError } from './errors.ts';
 
 const MAX_JSON_BYTES = 64 * 1024;
 
-const assertBoundedContentLength = (request: Request, maximum: number): void => {
+const assertBoundedContentLength = (request: Request | Response, maximum: number): void => {
   const header = request.headers.get('content-length');
   if (!header) return;
   const length = Number.parseInt(header, 10);
@@ -11,13 +11,29 @@ const assertBoundedContentLength = (request: Request, maximum: number): void => 
   }
 };
 export const readBoundedText = async (
-  request: Request,
+  request: Request | Response,
   maximumBytes = MAX_JSON_BYTES,
 ): Promise<string> => {
   assertBoundedContentLength(request, maximumBytes);
-  const value = await request.text();
-  if (new TextEncoder().encode(value).byteLength > maximumBytes) {
-    throw new ApiError(413, 'bad_request', 'The request body is too large.');
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let value = '';
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > maximumBytes) {
+        await reader.cancel();
+        throw new ApiError(413, 'bad_request', 'The request body is too large.');
+      }
+      value += decoder.decode(chunk.value, { stream: true });
+    }
+    value += decoder.decode();
+  } finally {
+    reader.releaseLock();
   }
   return value;
 };
@@ -45,10 +61,9 @@ export const readBoundedJson = async <T>(response: Response, maximumBytes = 512 
   if (contentLength && Number.parseInt(contentLength, 10) > maximumBytes) {
     throw new ApiError(502, 'provider_error', 'A provider returned an oversized response.');
   }
-  const text = await response.text();
-  if (new TextEncoder().encode(text).byteLength > maximumBytes) {
-    throw new ApiError(502, 'provider_error', 'A provider returned an oversized response.');
-  }
+  const text = await readBoundedText(response, maximumBytes).catch(() => {
+    throw new ApiError(502, 'provider_error', 'A provider returned an invalid or oversized response.');
+  });
   if (!text) return null as T;
   try {
     return JSON.parse(text) as T;

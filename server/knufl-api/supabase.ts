@@ -9,6 +9,8 @@ export interface SupabaseClientContext {
   config: KnuflServerConfig;
   bearerToken: string;
   apiKey?: string;
+  // Supplied only from a verified AuthContext, never tool arguments.
+  trustedOwnerId?: string;
   fetcher?: typeof fetch;
 }
 
@@ -26,6 +28,29 @@ export const supabaseRequest = async <T>(
 ): Promise<T> => {
   if (!path.startsWith('/rest/v1/')) {
     throw new ApiError(500, 'provider_error', 'Invalid Supabase API path.');
+  }
+  if (context.trustedOwnerId) {
+    const owner = context.trustedOwnerId;
+    const method = options.method ?? 'GET';
+    const body = options.body;
+    if (path.startsWith('/rest/v1/rpc/')) {
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+        || !('p_user_id' in body) || body.p_user_id !== owner) {
+        throw new ApiError(403, 'forbidden', 'The privileged operation has no verified owner.');
+      }
+    } else if (method === 'POST') {
+      const records = Array.isArray(body) ? body : [body];
+      if (!records.length || records.some(record => !record || typeof record !== 'object'
+        || !('user_id' in record) || record.user_id !== owner)) {
+        throw new ApiError(403, 'forbidden', 'The privileged write has no verified owner.');
+      }
+    } else {
+      const filters = new URL(path, context.config.supabaseUrl).searchParams;
+      if (filters.getAll('user_id').length !== 1 || filters.get('user_id') !== `eq.${owner}`
+        || (body && typeof body === 'object' && 'user_id' in body && body.user_id !== owner)) {
+        throw new ApiError(403, 'forbidden', 'The privileged operation has no verified owner filter.');
+      }
+    }
   }
   const fetcher = context.fetcher ?? fetch;
   let response: Response;

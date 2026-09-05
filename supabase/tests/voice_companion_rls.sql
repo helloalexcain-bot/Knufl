@@ -6,6 +6,11 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select plan(66);
 
+-- Budget-unit setup only. The real scheduler/key health is verified separately;
+-- this transaction rolls back and never claims live runtime readiness.
+update knufl_private.voice_supervisor_health
+  set last_tick_at = clock_timestamp(), provider_key_ready = true;
+
 select is(
   (
     select count(*)
@@ -1073,8 +1078,8 @@ select is(
     '20000000-0000-0000-0000-000000000002',
     '30000000-0000-4000-8000-000000000003', 1, 1, 1
   )),
-  'already_active',
-  'retrying the same voice claim is idempotent'
+  'already_claimed',
+  'a repeated claim cannot issue another provider call under the same budget slot'
 );
 
 select is(
@@ -1102,5 +1107,5 @@ select ok(
   'closing the prior call releases the concurrent-session slot'
 );
 
-select * from finish();
+select * from finish(true);
 rollback;

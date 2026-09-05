@@ -12,7 +12,11 @@
     "preview:pages": "vite preview --config vite.pages.config.ts",
     "start": "vinext start",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern dist-pages --ignore-pattern .next",
-    "test": "node --test --experimental-strip-types lib/*.test.ts"
+    "test": "node --test --experimental-strip-types lib/*.test.ts",
+    "test:db:local": "node scripts/test-db-local.mjs",
+    "test:db:live": "node scripts/test-db-live.mjs",
+    "test:live:preview": "node --experimental-strip-types scripts/test-live-preview.mjs",
+    "check:providers": "node --env-file-if-exists=.env.local scripts/provider-check.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.115.0",
@@ -22,6 +26,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.54.4",
+    "@electric-sql/pglite": "^0.5.8",
     "@openai/sites-vite-plugin": "^0.1.0 || ^0.2.0",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",

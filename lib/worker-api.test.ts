@@ -1670,11 +1670,12 @@ test('[mocked] closing a voice session uses only its authenticated database reco
       assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer server-openai-key');
       return new Response(null, { status: 200 });
     }
+    if (url.endsWith('/rest/v1/rpc/request_voice_close_for_user')) return json(true);
     if (url.endsWith('/rest/v1/rpc/close_voice_session_for_user')) {
       assert.deepEqual(JSON.parse(String(init?.body)), {
         p_user_id: USER_ID,
         p_session_id: VOICE_SESSION_ID,
-        p_openai_call_id: null,
+        p_openai_call_id: 'call_server_only',
       });
       return json([{
         closed: true,
@@ -1694,7 +1695,7 @@ test('[mocked] closing a voice session uses only its authenticated database reco
     { fetcher, randomUuid: () => 'request-id' },
   );
   assert.equal(response.status, 200);
-  assert.equal(urls.length, 4);
+  assert.equal(urls.length, 5);
   const payload = await response.json() as {
     result: { closed: boolean; providerHungUp: boolean };
   };
