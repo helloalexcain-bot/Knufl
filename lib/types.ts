@@ -60,7 +60,7 @@ export const createDefaultData = (): KnuflData => ({
   version: 1,
   onboarded: false,
   profile: {
-    name: 'Bram',
+    name: 'Knufl',
   },
   plan: {
     weeklyTarget: 3,

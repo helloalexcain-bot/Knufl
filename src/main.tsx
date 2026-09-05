@@ -1,6 +1,8 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import KnuflApp from '../app/page';
+// GitHub Pages intentionally keeps the export-capable local prototype while
+// the Vinext/Cloudflare entry point serves the authenticated voice preview.
+import KnuflApp from '../app/legacy-prototype';
 import '../app/globals.css';
 
 const root = document.getElementById('root');

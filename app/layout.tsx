@@ -2,19 +2,16 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://helloalexcain-bot.github.io/Knufl/'),
-  title: 'Knufl — Get stronger together',
-  description: 'A warm, local-first fitness companion that trains alongside you.',
+  title: 'Knufl — Your voice training companion',
+  description: 'A warm, accurate voice companion for planning and recording real training.',
   openGraph: {
-    title: 'Knufl — Get stronger together',
-    description: 'A lovable training companion for following through, one practice day at a time.',
-    images: [{ url: '/Knufl/og.png', width: 1200, height: 630, alt: 'Knufl — Get stronger together' }],
+    title: 'Knufl — Your voice training companion',
+    description: 'A lovable training companion for planning, recording and remembering real workouts.',
   },
   twitter: {
-    card: 'summary_large_image',
-    title: 'Knufl — Get stronger together',
-    description: 'A lovable training companion for following through, one practice day at a time.',
-    images: ['/Knufl/og.png'],
+    card: 'summary',
+    title: 'Knufl — Your voice training companion',
+    description: 'A lovable training companion for planning, recording and remembering real workouts.',
   },
 };
 

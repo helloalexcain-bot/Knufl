@@ -4,6 +4,8 @@ import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  root: fileURLToPath(new URL('./pages', import.meta.url)),
+  publicDir: fileURLToPath(new URL('./public', import.meta.url)),
   base: process.env.PAGES_BASE_PATH ?? '/Knufl/',
   css: { postcss: { plugins: [tailwindcss()] } },
   plugins: [react()],
@@ -13,7 +15,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist-pages',
+    outDir: fileURLToPath(new URL('./dist-pages', import.meta.url)),
     emptyOutDir: true,
   },
 });

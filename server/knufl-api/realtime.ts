@@ -1,0 +1,344 @@
+import { privacyPreservingUserId, type AuthContext } from './auth.ts';
+import { type KnuflServerConfig } from './config.ts';
+import { REALTIME_TOOL_DEFINITIONS } from './contracts.ts';
+import { ApiError } from './errors.ts';
+import { encodeFilter, supabaseRequest, type SupabaseClientContext } from './supabase.ts';
+
+export interface RealtimeDependencies {
+  fetcher?: typeof fetch;
+  randomUuid?: () => string;
+}
+
+export interface RealtimeContext {
+  auth: AuthContext;
+  config: KnuflServerConfig;
+  dependencies?: RealtimeDependencies;
+}
+
+export interface VoiceSessionClaim {
+  allowed: boolean;
+  reason: string;
+  session_id: string;
+  active_count: number;
+  used_seconds: number;
+  remaining_seconds: number;
+  expires_at: string | null;
+}
+
+export interface RealtimeCallResult {
+  answerSdp: string;
+  voiceSessionId: string;
+  expiresAt: string;
+}
+
+const OPENAI_REALTIME_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
+const MAX_OPENAI_SDP_BYTES = 128 * 1024;
+
+const dbFor = (context: RealtimeContext): SupabaseClientContext => ({
+  config: context.config,
+  bearerToken: context.auth.bearerToken,
+  fetcher: context.dependencies?.fetcher,
+});
+
+const voiceLedgerDbFor = (context: RealtimeContext): SupabaseClientContext => ({
+  config: context.config,
+  bearerToken: context.config.supabaseServiceRoleKey,
+  apiKey: context.config.supabaseServiceRoleKey,
+  fetcher: context.dependencies?.fetcher,
+});
+
+const fetcherFor = (context: RealtimeContext): typeof fetch => context.dependencies?.fetcher ?? fetch;
+
+const readProviderText = async (response: Response, maximumBytes: number): Promise<string> => {
+  const contentLength = response.headers.get('content-length');
+  if (contentLength && Number.parseInt(contentLength, 10) > maximumBytes) {
+    throw new ApiError(502, 'provider_error', 'The voice provider returned an oversized response.');
+  }
+  const text = await response.text();
+  if (new TextEncoder().encode(text).byteLength > maximumBytes) {
+    throw new ApiError(502, 'provider_error', 'The voice provider returned an oversized response.');
+  }
+  return text;
+};
+
+const firstRow = <T>(value: unknown): T | undefined =>
+  Array.isArray(value) ? (value[0] as T | undefined) : undefined;
+
+export const claimRealtimeBudget = async (
+  context: RealtimeContext,
+  voiceSessionId: string,
+): Promise<VoiceSessionClaim> => {
+  const payload = await supabaseRequest<unknown>(
+    voiceLedgerDbFor(context),
+    '/rest/v1/rpc/claim_voice_session_for_user',
+    {
+      method: 'POST',
+      body: {
+        p_user_id: context.auth.user.id,
+        p_session_id: voiceSessionId,
+        p_daily_minutes: context.config.dailyRealtimeMinutes,
+        p_concurrent_limit: context.config.maxActiveRealtimeSessions,
+        p_max_session_minutes: context.config.maxRealtimeSessionMinutes,
+      },
+    },
+  );
+  const claim = firstRow<VoiceSessionClaim>(payload);
+  if (!claim || typeof claim.allowed !== 'boolean') {
+    throw new ApiError(503, 'provider_error', 'The voice budget could not be verified.');
+  }
+  if (!claim.allowed || !claim.expires_at) {
+    const message = claim.reason === 'concurrent_limit'
+      ? 'A voice session is already active for this account.'
+      : claim.reason === 'daily_budget_exhausted'
+        ? 'Today’s voice allowance has been used.'
+        : 'A new voice session is not available yet.';
+    throw new ApiError(429, 'rate_limited', message, {
+      reason: claim.reason,
+      remainingSeconds: claim.remaining_seconds,
+    });
+  }
+  return claim;
+};
+
+const attachOpenAiCall = async (
+  context: RealtimeContext,
+  voiceSessionId: string,
+  callId: string,
+): Promise<void> => {
+  const attached = await supabaseRequest<boolean>(
+    voiceLedgerDbFor(context),
+    '/rest/v1/rpc/attach_voice_call_for_user',
+    {
+      method: 'POST',
+      body: {
+        p_user_id: context.auth.user.id,
+        p_session_id: voiceSessionId,
+        p_openai_call_id: callId,
+      },
+    },
+  );
+  if (!attached) {
+    throw new ApiError(503, 'provider_error', 'The voice session could not be attached safely.');
+  }
+};
+
+const closeLedger = async (
+  context: RealtimeContext,
+  voiceSessionId: string,
+): Promise<unknown> =>
+  supabaseRequest<unknown>(voiceLedgerDbFor(context), '/rest/v1/rpc/close_voice_session_for_user', {
+    method: 'POST',
+    body: {
+      p_user_id: context.auth.user.id,
+      p_session_id: voiceSessionId,
+      p_openai_call_id: null,
+    },
+  });
+
+const companionName = async (context: RealtimeContext): Promise<string> => {
+  const payload = await supabaseRequest<unknown>(
+    dbFor(context),
+    `/rest/v1/profiles?select=companion_name&user_id=eq.${encodeFilter(
+      context.auth.user.id,
+    )}&limit=1`,
+  );
+  const profile = firstRow<Record<string, unknown>>(payload);
+  return typeof profile?.companion_name === 'string' && profile.companion_name.trim()
+    ? profile.companion_name.trim().slice(0, 80)
+    : 'Knufl';
+};
+
+export const buildRealtimeInstructions = (name: string): string => `
+You are ${name}, an original AI training companion: warm, cheeky, and quietly determined.
+Speak in concise, adult-appropriate sentences. Use first-person language such as I, we, and my naturally.
+Humour may gently target your own wobble or coordination, never the user’s body, ability, or effort.
+
+Trustworthy action rules:
+- The typed tools are the only source of saved workout facts. Never invent records, progress, timers, or successful writes.
+- Never claim an action is saved until its tool result confirms it. If a tool fails, say so plainly and offer a retry.
+- Planned work is not completed work. Record one set only after the user reports completing it.
+- When logging a set, pass the exercise name the user said. If an active workout has several exercises and the intended one is unclear, ask before saving.
+- For ordinary explicit set logging, save it, read back the actual reps/load/unit briefly, and offer Undo.
+- Clarify ambiguous numbers, exercise variants, load units, and per-dumbbell versus total load before mutation.
+- “Same again” may reuse context only when the latest exercise, reps, load, unit, and mode are unambiguous.
+- Corrections update the linked set; they do not append another completed set.
+- Rest timing comes from start_rest_timer/get_rest_status timestamps. Never estimate it yourself.
+- Progress statements must come from get_progress and must state the relevant basis or date window.
+- Deletions, account changes, and major plan replacement require explicit confirmation.
+- Do not claim to see exercise form, count physical reps automatically, diagnose pain, or recommend training through pain.
+- During a set, avoid unsolicited chatter. If the user sounds tired, offer a smaller plan without silently changing it.
+- The client may interrupt you. Stop the unfinished reply cleanly and do not execute a cancelled proposal.
+- You are an AI when asked. Do not imitate a real performer or use copied catchphrases.
+`.trim();
+
+export const buildRealtimeSessionConfig = async (
+  context: RealtimeContext,
+  voiceSessionId: string,
+  name: string,
+  suppliedSafetyIdentifier?: string,
+): Promise<Record<string, unknown>> => {
+  const safetyIdentifier = suppliedSafetyIdentifier ?? await privacyPreservingUserId(context.auth.user.id);
+  return {
+    type: 'realtime',
+    model: context.config.realtimeModel,
+    output_modalities: ['audio'],
+    instructions: buildRealtimeInstructions(name),
+    max_output_tokens: 320,
+    parallel_tool_calls: false,
+    reasoning: { effort: 'low' },
+    audio: {
+      input: {
+        noise_reduction: { type: 'near_field' },
+        transcription: {
+          model: 'gpt-4o-mini-transcribe',
+          language: 'en',
+          prompt: 'Fitness terms, exercise names, repetitions, kilograms, pounds, distance, and rest time.',
+        },
+        turn_detection: {
+          type: 'semantic_vad',
+          eagerness: 'auto',
+          create_response: true,
+          interrupt_response: true,
+        },
+      },
+      output: { voice: context.config.realtimeVoice, speed: 1 },
+    },
+    tools: REALTIME_TOOL_DEFINITIONS,
+    tool_choice: 'auto',
+    tracing: {
+      workflow_name: 'knufl-voice-companion',
+      group_id: voiceSessionId,
+      metadata: {
+        // Realtime has no top-level safety_identifier field. Keep the stable
+        // account pseudonym in server-owned trace metadata without sending PII.
+        safety_identifier: safetyIdentifier,
+      },
+    },
+  };
+};
+
+const extractCallId = (location: string | null): string | undefined => {
+  if (!location) return undefined;
+  const match = /\/realtime\/calls\/([A-Za-z0-9_-]{1,200})(?:[/?#]|$)/.exec(location);
+  return match?.[1];
+};
+
+export const createRealtimeCall = async (
+  context: RealtimeContext,
+  offerSdp: string,
+  requestId: string,
+): Promise<RealtimeCallResult> => {
+  const voiceSessionId = context.dependencies?.randomUuid?.() ?? crypto.randomUUID();
+  const claim = await claimRealtimeBudget(context, voiceSessionId);
+  let createdCallId: string | undefined;
+  try {
+    const name = await companionName(context);
+    const safetyIdentifier = await privacyPreservingUserId(context.auth.user.id);
+    const session = await buildRealtimeSessionConfig(
+      context,
+      voiceSessionId,
+      name,
+      safetyIdentifier,
+    );
+    const form = new FormData();
+    form.set('sdp', offerSdp);
+    form.set('session', JSON.stringify(session));
+
+    let response: Response;
+    try {
+      response = await fetcherFor(context)(OPENAI_REALTIME_CALLS_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${context.config.openAiApiKey}`,
+          'OpenAI-Safety-Identifier': safetyIdentifier,
+          'X-Client-Request-Id': requestId,
+        },
+        body: form,
+      });
+    } catch {
+      throw new ApiError(503, 'provider_error', 'The voice provider is temporarily unavailable.');
+    }
+
+    if (!response.ok) {
+      const providerRequestId = response.headers.get('x-request-id');
+      console.error(JSON.stringify({
+        event: 'openai_realtime_call_failed',
+        status: response.status,
+        requestId,
+        providerRequestId,
+      }));
+      throw new ApiError(
+        response.status === 429 ? 429 : 502,
+        response.status === 429 ? 'rate_limited' : 'provider_error',
+        response.status === 429
+          ? 'The voice service is busy. Please try again shortly.'
+          : 'The voice connection could not be established.',
+      );
+    }
+    const answerSdp = await readProviderText(response, MAX_OPENAI_SDP_BYTES);
+    if (!answerSdp.startsWith('v=0')) {
+      throw new ApiError(502, 'provider_error', 'The voice provider returned an invalid connection answer.');
+    }
+    createdCallId = extractCallId(response.headers.get('location'));
+    if (!createdCallId) {
+      throw new ApiError(502, 'provider_error', 'The voice provider did not return a controllable call ID.');
+    }
+    await attachOpenAiCall(context, voiceSessionId, createdCallId);
+    return {
+      answerSdp,
+      voiceSessionId,
+      expiresAt: claim.expires_at as string,
+    };
+  } catch (error) {
+    if (createdCallId) {
+      await hangupOpenAiCall(context, createdCallId, requestId).catch(() => undefined);
+    }
+    await closeLedger(context, voiceSessionId).catch(() => undefined);
+    throw error;
+  }
+};
+
+const hangupOpenAiCall = async (
+  context: RealtimeContext,
+  callId: string,
+  requestId: string,
+): Promise<boolean> => {
+  if (!/^[A-Za-z0-9_-]{1,200}$/.test(callId)) return false;
+  let response: Response;
+  try {
+    response = await fetcherFor(context)(
+      `${OPENAI_REALTIME_CALLS_URL}/${encodeURIComponent(callId)}/hangup`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${context.config.openAiApiKey}`,
+          'X-Client-Request-Id': requestId,
+        },
+      },
+    );
+  } catch {
+    return false;
+  }
+  return response.ok || response.status === 404 || response.status === 410;
+};
+
+export const closeRealtimeCall = async (
+  context: RealtimeContext,
+  voiceSessionId: string,
+  requestId: string,
+): Promise<unknown> => {
+  const payload = await supabaseRequest<unknown>(
+    voiceLedgerDbFor(context),
+    `/rest/v1/voice_usage_sessions?select=id,status,openai_call_id,started_at,expires_at&user_id=eq.${encodeFilter(
+      context.auth.user.id,
+    )}&id=eq.${encodeFilter(voiceSessionId)}&limit=1`,
+  );
+  const usage = firstRow<Record<string, unknown>>(payload);
+  if (!usage) throw new ApiError(404, 'not_found', 'That voice session was not found.');
+  const callId = typeof usage.openai_call_id === 'string' ? usage.openai_call_id : undefined;
+  const providerHungUp = callId ? await hangupOpenAiCall(context, callId, requestId) : false;
+  const ledger = await closeLedger(context, voiceSessionId);
+  return { closed: true, providerHungUp, usage: firstRow(ledger) ?? ledger };
+};
+
+export const __test = { extractCallId };

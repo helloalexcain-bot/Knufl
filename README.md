@@ -1,6 +1,6 @@
-# Knufl prototype
+# Knufl
 
-A mobile-first, local-only fitness companion prototype. Knufl helps adults follow through on exercise plans they already understand and rewards one completed, user-reported exercise day at a time.
+Knufl is a phone-first training companion with an expressive character, typed workout actions and an optional live OpenAI Realtime voice session. This feature branch implements the stages 1–4 preview architecture while keeping the export-capable GitHub Pages prototype on `main` unchanged.
 
 ## Run locally
 
@@ -11,46 +11,43 @@ npm install
 npm run dev
 ```
 
-Open the local address shown in the terminal (normally `http://localhost:3000`). For production checks, use `npm run build` and `npm run build:pages`.
+Without provider configuration, choose **Open development demonstrator**. It exercises the character controller, plan/set/correction/rest/progress tools and browser persistence without pretending to provide cloud recovery or live AI voice.
 
-## GitHub Pages
+The five approved PNG poses remain the visual reference. They are a clearly labelled development renderer, not the final lifelike character rig. See [the rig contract](docs/character-rig-contract.md) for the exact missing production asset.
 
-The static Pages build uses the `/Knufl/` base path and outputs to `dist-pages/`. Every push to `main` runs tests, lint and the static build before deploying through `.github/workflows/deploy-pages.yml`.
+## Architecture
 
-The app uses a single static route. `404.html` mirrors the app shell so a direct refresh under the project path still loads the prototype.
+- Vinext/React app and same-origin route handlers deploy together on Cloudflare Workers.
+- Supabase Auth/Postgres owns accounts and durable workout data; every record is protected by per-user RLS.
+- OpenAI Realtime uses WebRTC. The Worker creates authenticated sessions and never exposes the standard API key.
+- Typed tools—not the model—validate and persist plans, actual sets, corrections, undo, rest timers, cardio, completion and grounded progress.
+- Confirmed offline actions use the account-specific key `knufl.voice.pending.v1::<account-id>`. The local demonstrator uses `knufl.voice.demo.v1::development-demonstrator`; Supabase Auth uses `knufl.auth.v1`.
 
-## What is included
+See [architecture](docs/voice-companion-architecture.md) and [provider setup](docs/provider-setup.md).
 
-- Two-step companion naming and flexible plan onboarding.
-- The companion name remains editable in settings; there are no gender or pronoun fields.
-- Persistent session timer plus planned, shorter and already-completed logging flows.
-- A date-derived home acknowledgement after today’s first or additional logged sessions, while the next planned session remains available.
-- Optional duration and feeling, editable/deletable history, rest days and a warm return flow.
-- One practice credit per local calendar day with a permanent Little Mountain unlock after three credited days.
-- Activity-specific first-session memories and milestone memories tied to the relevant session.
-- Local JSON export/import and a confirmed reset.
-- Static supplied character poses with restrained CSS greeting, wobble and paw-tap treatments; reduced-motion preferences are respected.
+## Existing progress and the public prototype
 
-## Local persistence and transferring progress
+The existing `/Knufl/` GitHub Pages app remains built separately from
+`pages/index.html` and `app/legacy-prototype.tsx` with:
 
-Progress is stored in browser `localStorage` under the app-specific key `knufl.progress.v1`. There is no account, backend or cloud sync. Localhost, the hosted Pages site and each phone/browser have separate storage.
+```bash
+npm run build:pages
+```
 
-To transfer progress:
+Its route and `knufl.progress.v1` export remain available. Browser storage cannot move between origins or devices automatically. Export JSON from the old site, then choose that file during cloud onboarding or later in Settings. Import shows a preview, preserves stable session/memory/milestone IDs, discards legacy gender/pronoun fields and is idempotent.
 
-1. On the source browser, open **You → Local progress → Export progress**.
-2. Move the downloaded JSON file to the destination device if necessary, for example through Files, AirDrop or another method you trust.
-3. Open the hosted Knufl URL on the destination browser.
-4. Choose **You → Local progress → Import progress** and select the JSON file.
+Cloud account exports use format version 2 and can also be restored during onboarding or from Settings into a bootstrap-only signed-in account. The restore previews counts and conflicts, preserves linked IDs/audit history/credits/unlocks, and never silently merges over different cloud history. Signing into the same Supabase account remains the ordinary cross-device recovery path. Because archive IDs remain stable and globally unique, restoring into a different account is a disaster-recovery path only after the source account data has been deleted; two live accounts cannot own the same archive IDs. Demonstrator archives are deliberately development-only and restore only in the demonstrator.
 
-Older Knufl exports that contain gender or pronoun fields remain importable. The companion name, plan, workouts, memories and milestones are retained; removed identity fields are discarded.
+## Verification
 
-## Product rules and copy
+```bash
+npm test
+npm run lint
+npx tsc --noEmit --incremental false
+npm run build
+npm run build:pages
+```
 
-- Progression and calendar rules: `lib/progression.ts`
-- Data model and defaults: `lib/types.ts`
-- Scripted companion dialogue: `lib/dialogue.ts`
-- Browser persistence and import migration: `lib/storage.ts`
-- Focused rule and migration tests: `lib/*.test.ts`
-- App flow and UI: `app/page.tsx`
+Node tests include provider-independent domain/controller tests and Worker integration tests explicitly labelled `[mocked]`. The Supabase pgTAP suite is in `supabase/tests/voice_companion_rls.sql` and requires a disposable Supabase/Postgres project. Real OAuth, RLS isolation, Realtime audio, cross-device recovery and iPhone behaviour require the external configuration and device checks listed in the provider guide.
 
-The character files in `public/bram/` are crops prepared from the supplied approved reference sheet. A six-pixel presentation crop hides a source-sheet text remnant at the top of the hero image without touching the character silhouette. Motion is applied to static artwork; the character is not fully rigged or skeletal-animated in this prototype.
+No gender or pronoun fields are collected. The companion keeps its editable name and uses natural first-person dialogue.
