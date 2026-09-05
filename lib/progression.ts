@@ -12,6 +12,45 @@ export const creditedDays = (logs: SessionLog[]): string[] =>
 
 export const practiceCredits = (logs: SessionLog[]): number => creditedDays(logs).length;
 
+export interface DailySessionState {
+  date: string;
+  sessions: SessionLog[];
+  latestSession?: SessionLog;
+  isFirstEverSession: boolean;
+}
+
+export const dailySessionState = (
+  logs: SessionLog[],
+  date = localDateKey(),
+): DailySessionState => {
+  const sessions = logs
+    .filter((log) => log.date === date)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+  return {
+    date,
+    sessions,
+    latestSession: sessions[sessions.length - 1],
+    isFirstEverSession: logs.length === 1 && sessions.length === 1,
+  };
+};
+
+export const firstSessionMemoryNote = (activity: string): string => {
+  const label = activity.trim() || 'Activity';
+  switch (label.toLocaleLowerCase()) {
+    case 'walking':
+      return 'Our first walk. One wonderfully wobbly beginning.';
+    case 'running':
+      return 'Our first run. I found my stride eventually. Mostly.';
+    case 'cycling':
+      return 'Our first ride. I pedalled bravely in spirit.';
+    case 'strength':
+      return 'Our first strength session. A strong start, with one tiny paw wobble.';
+    default:
+      return `Our first session: ${label}. One wonderfully wobbly beginning.`;
+  }
+};
+
 export const createId = (): string =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
@@ -58,7 +97,7 @@ export const addSession = (data: KnuflData, log: SessionLog): SaveResult => {
       id: createId(),
       associatedSessionId: log.id,
       title: 'Our first session',
-      note: 'The day we began getting stronger together.',
+      note: firstSessionMemoryNote(log.activity),
       createdAt: log.createdAt,
     });
   }
@@ -102,11 +141,24 @@ export const reconcileMilestones = (data: KnuflData, associatedSessionId?: strin
   return { ...data, unlockedMoves, memories };
 };
 
-export const updateSession = (data: KnuflData, updated: SessionLog): KnuflData =>
-  reconcileMilestones({
+export const updateSession = (data: KnuflData, updated: SessionLog): KnuflData => {
+  const previous = data.logs.find((log) => log.id === updated.id);
+  const memories = data.memories.map((memory) => {
+    const isGeneratedFirstMemory = previous
+      && memory.associatedSessionId === updated.id
+      && memory.title === 'Our first session'
+      && memory.note === firstSessionMemoryNote(previous.activity);
+    return isGeneratedFirstMemory
+      ? { ...memory, note: firstSessionMemoryNote(updated.activity) }
+      : memory;
+  });
+
+  return reconcileMilestones({
     ...data,
     logs: data.logs.map((log) => (log.id === updated.id ? updated : log)),
+    memories,
   }, updated.id);
+};
 
 export const deleteSession = (data: KnuflData, id: string): KnuflData => ({
   ...data,

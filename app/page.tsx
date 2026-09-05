@@ -14,6 +14,7 @@ import {
   addSession,
   calendarDayDifference,
   createId,
+  dailySessionState,
   deleteSession,
   localDateKey,
   memoryDate,
@@ -21,7 +22,7 @@ import {
   practiceCredits,
   updateSession,
 } from '@/lib/progression';
-import { HOME_DIALOGUE, REST_DIALOGUE, RETURN_DIALOGUE, sameDayDialogue, savedDialogue } from '@/lib/dialogue';
+import { activityAcknowledgement, HOME_DIALOGUE, REST_DIALOGUE, RETURN_DIALOGUE, sameDayDialogue, savedDialogue } from '@/lib/dialogue';
 import { parseProgressImport, readProgress, STORAGE_KEY, writeProgress } from '@/lib/storage';
 import { BottomNav, Brand, Button, Character, displayDate, FieldLabel, Modal } from './components';
 
@@ -69,22 +70,36 @@ export default function Home() {
   const [resetArmed, setResetArmed] = useState(false);
   const [notice, setNotice] = useState('');
   const [importError, setImportError] = useState('');
+  const [today, setToday] = useState(localDateKey);
   const saveLock = useRef(false);
 
   /* Browser storage is intentionally hydrated after mount to keep the server render device-agnostic. */
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    const today = localDateKey();
+    const openedToday = localDateKey();
     const loaded = readProgress();
-    setReturnPrompt(loaded.onboarded && calendarDayDifference(loaded.lastOpened, today) >= 7);
-    const opened = { ...loaded, lastOpened: today };
+    setReturnPrompt(loaded.onboarded && calendarDayDifference(loaded.lastOpened, openedToday) >= 7);
+    const opened = { ...loaded, lastOpened: openedToday };
     writeProgress(opened);
     setData(opened);
     setProfileDraft(opened.profile);
     setPlanDraft(opened.plan);
+    setToday(openedToday);
     setReady(true);
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    const syncLocalDate = () => setToday(localDateKey());
+    const timer = window.setInterval(syncLocalDate, 60_000);
+    window.addEventListener('focus', syncLocalDate);
+    document.addEventListener('visibilitychange', syncLocalDate);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', syncLocalDate);
+      document.removeEventListener('visibilitychange', syncLocalDate);
+    };
+  }, []);
 
   useEffect(() => {
     if (!notice) return;
@@ -117,7 +132,6 @@ export default function Home() {
     () => `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(data, null, 2))}`,
     [data],
   );
-  const today = localDateKey();
   const activity = resolvedActivity(data.plan);
   const isRestingToday = data.restDates.includes(today);
   const openLog = (source: LogDraft['source'], existing?: SessionLog, duration?: number) => {
@@ -375,6 +389,7 @@ export default function Home() {
             <HomeView
               data={data}
               credits={credits}
+              today={today}
               isRestingToday={isRestingToday}
               onStart={() => beginSession()}
               onContinue={() => setView('session')}
@@ -495,8 +510,8 @@ function IdentityOnboarding({
           <p className="intro">A little cheeky. Quietly determined. Here to get stronger with you.</p>
           <div className="identity-fields identity-fields--simple">
             <label className="form-field">
-              <FieldLabel>Their name</FieldLabel>
-              <input value={profile.name} maxLength={24} onChange={(event) => onChange({ ...profile, name: event.target.value })} autoComplete="off" />
+              <FieldLabel>Name your Knufl</FieldLabel>
+              <input aria-label="Name your Knufl" value={profile.name} maxLength={24} onChange={(event) => onChange({ ...profile, name: event.target.value })} autoComplete="off" />
             </label>
           </div>
           <p className="fine-print">You can change {profile.name.trim() || 'your Knufl'}’s name later.</p>
@@ -587,6 +602,7 @@ function PlanFields({ plan, onChange }: { plan: Plan; onChange: (plan: Plan) => 
 function HomeView({
   data,
   credits,
+  today,
   isRestingToday,
   onStart,
   onContinue,
@@ -598,6 +614,7 @@ function HomeView({
 }: {
   data: KnuflData;
   credits: number;
+  today: string;
   isRestingToday: boolean;
   onStart: () => void;
   onContinue: () => void;
@@ -610,17 +627,35 @@ function HomeView({
   const nextDate = nextPlannedDate(data.plan.days, data.plan.nextSessionDate);
   const dialogue = HOME_DIALOGUE[data.dialogueCursor % HOME_DIALOGUE.length];
   const milestoneUnlocked = data.unlockedMoves.includes('little-mountain');
+  const completedToday = dailySessionState(data.logs, today);
+  const todayComplete = Boolean(completedToday.latestSession);
+  const completionStatus = completedToday.isFirstEverSession
+    ? 'First session together ✓'
+    : completedToday.sessions.length > 1
+      ? `${completedToday.sessions.length} sessions today ✓`
+      : 'Today’s session complete ✓';
+  const heroEyebrow = todayComplete
+    ? completionStatus
+    : isRestingToday
+      ? 'A quieter kind of progress'
+      : 'Today, together';
+  const heroTitle = todayComplete ? 'Nicely done.' : isRestingToday ? 'Rest easy.' : 'Hi, teammate.';
+  const heroDialogue = completedToday.latestSession
+    ? activityAcknowledgement(completedToday.latestSession.activity)
+    : isRestingToday
+      ? REST_DIALOGUE
+      : dialogue;
   return (
     <div className="home-view">
-      <section className={`companion-hero ${isRestingToday ? 'companion-hero--rest' : ''}`}>
+      <section className={`companion-hero ${todayComplete ? 'companion-hero--complete' : isRestingToday ? 'companion-hero--rest' : ''}`}>
         <div className="companion-hero__copy">
-          <p className="eyebrow">{isRestingToday ? 'A quieter kind of progress' : 'Today, together'}</p>
-          <h1>{isRestingToday ? 'Rest easy.' : `Hi, teammate.`}</h1>
-          <p className="dialogue">“{isRestingToday ? REST_DIALOGUE : dialogue}”</p>
+          <p className="eyebrow">{heroEyebrow}</p>
+          <h1>{heroTitle}</h1>
+          <p className="dialogue">“{heroDialogue}”</p>
         </div>
         <div className="companion-hero__art">
           <span className="sun-shape" />
-          <Character pose={isRestingToday ? 'wave' : 'hero'} name={data.profile.name} animated={!isRestingToday} />
+          <Character pose={todayComplete || isRestingToday ? 'wave' : 'hero'} name={data.profile.name} animated={!isRestingToday} />
           <span className="name-tag">{data.profile.name}</span>
         </div>
       </section>
@@ -639,7 +674,7 @@ function HomeView({
           <p>{resolvedActivity(data.plan)} · your own familiar routine</p>
         </div>
         <div className="today-card__actions">
-          <Button onClick={onStart}>{isRestingToday ? 'Change my mind & start' : 'Start session'}</Button>
+          <Button variant={todayComplete ? 'secondary' : 'primary'} onClick={onStart}>{todayComplete ? 'Start another session' : isRestingToday ? 'Change my mind & start' : 'Start session'}</Button>
           <Button variant="secondary" onClick={onShort}>Short on time?</Button>
         </div>
       </section>
@@ -753,10 +788,10 @@ function Celebration({
   const { kind, log } = celebration;
   const title = kind === 'milestone' ? 'Little Mountain unlocked.' : kind === 'same-day' ? 'Still showed up.' : 'We showed up.';
   const dialogue = kind === 'same-day'
-    ? sameDayDialogue(name)
+    ? sameDayDialogue()
     : kind === 'milestone'
       ? 'Three practice days. Look at that stance. Please ignore the tiny wobble on the left.'
-      : savedDialogue(name, log.duration);
+      : savedDialogue(log.duration);
   const pose = pawTapped ? 'pawtap' : kind === 'milestone' ? 'balance' : kind === 'same-day' ? 'wave' : 'wobble';
   return (
     <div className="celebration-backdrop" role="presentation">
@@ -765,7 +800,7 @@ function Celebration({
         <div className="celebration__art"><span className="celebration-ring" /><Character pose={pose} name={name} animated /></div>
         <p className="eyebrow">{kind === 'milestone' ? 'A new shared move' : kind === 'first' ? 'Our first session' : 'Same team'}</p>
         <h2 id="celebration-title">{pawTapped ? 'Paw tap.' : title}</h2>
-        <p className="celebration__dialogue">“{pawTapped ? `Good work, teammate. ${name}’s paw survived too.` : dialogue}”</p>
+        <p className="celebration__dialogue">“{pawTapped ? 'Good work, teammate. My paw survived too.' : dialogue}”</p>
         {kind !== 'same-day' && !pawTapped ? (
           <div className="celebration__actions"><Button onClick={onPaw}>Paw tap</Button><Button variant="quiet" onClick={onClose}>Not now</Button></div>
         ) : (

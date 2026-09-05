@@ -168,6 +168,7 @@ input:focus { border-color: var(--forest); box-shadow: 0 0 0 3px rgba(7, 62, 49,
   user-select: none;
   -webkit-user-drag: none;
 }
+.character--hero { clip-path: inset(6px 0 0); }
 .character-stage .character { width: min(620px, 114%); max-height: 630px; }
 .sage-orbit { position: absolute; width: 78%; aspect-ratio: 1; border: 34px solid rgba(170, 178, 154, .22); border-radius: 50%; transform: rotate(-10deg); }
 blockquote {
@@ -205,6 +206,7 @@ blockquote {
 .home-view { display: grid; gap: 18px; }
 .companion-hero { min-height: 390px; display: grid; grid-template-columns: .95fr 1.05fr; overflow: hidden; border-radius: 28px; background: linear-gradient(135deg, #e4e7da 0%, #f1eadc 100%); }
 .companion-hero--rest { background: linear-gradient(145deg, #dce4da, #eee8da); }
+.companion-hero--complete { background: linear-gradient(145deg, #dfe8da, #f2eadb); }
 .companion-hero__copy { z-index: 2; align-self: center; padding: 44px 0 44px 44px; }
 .companion-hero__copy h1 { margin: 8px 0 16px; font: 800 clamp(42px, 5vw, 62px)/1 Georgia, serif; letter-spacing: -.045em; }
 .dialogue { max-width: 31ch; margin: 0; color: #36594e; font: 700 18px/1.45 Georgia, serif; }

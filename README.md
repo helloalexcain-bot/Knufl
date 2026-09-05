@@ -24,9 +24,10 @@ The app uses a single static route. `404.html` mirrors the app shell so a direct
 - Two-step companion naming and flexible plan onboarding.
 - The companion name remains editable in settings; there are no gender or pronoun fields.
 - Persistent session timer plus planned, shorter and already-completed logging flows.
+- A date-derived home acknowledgement after today’s first or additional logged sessions, while the next planned session remains available.
 - Optional duration and feeling, editable/deletable history, rest days and a warm return flow.
 - One practice credit per local calendar day with a permanent Little Mountain unlock after three credited days.
-- First-session and milestone memories tied to the relevant session.
+- Activity-specific first-session memories and milestone memories tied to the relevant session.
 - Local JSON export/import and a confirmed reset.
 - Static supplied character poses with restrained CSS greeting, wobble and paw-tap treatments; reduced-motion preferences are respected.
 
@@ -52,4 +53,4 @@ Older Knufl exports that contain gender or pronoun fields remain importable. The
 - Focused rule and migration tests: `lib/*.test.ts`
 - App flow and UI: `app/page.tsx`
 
-The character files in `public/bram/` are crops prepared from the supplied approved reference sheet. Motion is applied to static artwork; the character is not fully rigged or skeletal-animated in this prototype.
+The character files in `public/bram/` are crops prepared from the supplied approved reference sheet. A six-pixel presentation crop hides a source-sheet text remnant at the top of the hero image without touching the character silhouette. Motion is applied to static artwork; the character is not fully rigged or skeletal-animated in this prototype.
