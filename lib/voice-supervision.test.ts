@@ -59,6 +59,24 @@ test('[mocked provider] another account cannot close a known voice-session ID th
   assert.equal(response.status,404);assert.equal(providerCalls,0);
 });
 
+test('[mocked provider] hangup allows the bounded eight-second acknowledgement window', async (t) => {
+  const timeout = t.mock.method(AbortSignal, 'timeout', () => new AbortController().signal);
+  let hangupSignal: AbortSignal | null | undefined;
+  const response = await handleRealtimeCloseRequest(request(true), config, { fetcher: async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/auth/v1/user')) return json({ id: owner });
+    if (url.includes('/voice_usage_sessions?')) return json([{ id: voiceId, status: 'active', openai_call_id: 'rtc_test' }]);
+    if (url.endsWith('/request_voice_close_for_user')) return json(true);
+    if (url.endsWith('/hangup')) { hangupSignal = init?.signal; return json({}, 404); }
+    if (url.endsWith('/close_voice_session_for_user')) return json([{ closed: true }]);
+    throw new Error('Unexpected request');
+  } });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).result.providerHungUp, true);
+  const deadline = timeout.mock.calls.find(call => call.result === hangupSignal);
+  assert.deepEqual(deadline?.arguments, [8_000]);
+});
+
 test('[mocked provider] a missing supervisor prevents provider issuance', async () => {
   let calls=0;
   const response=await handleRealtimeRequest(request(),config,{fetcher:async(input)=>{

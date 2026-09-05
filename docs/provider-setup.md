@@ -13,6 +13,8 @@ Never put credentials in chat, issues, commits, screenshots or shell arguments. 
 | Supabase URL configuration | https://supabase.com/dashboard/project/ntymjigywntaczxiqpdh/auth/url-configuration |
 | Google Cloud OAuth clients (`knufl-preview`) | https://console.cloud.google.com/auth/clients?project=knufl-preview |
 | Google OAuth test users | https://console.cloud.google.com/auth/audience?project=knufl-preview |
+| OpenAI project API keys (select **Knufl**) | https://platform.openai.com/api-keys |
+| Supabase Vault | https://supabase.com/dashboard/project/ntymjigywntaczxiqpdh/integrations/vault/secrets |
 | Google/Apple provider callback | `https://ntymjigywntaczxiqpdh.supabase.co/auth/v1/callback` |
 
 The Site URL and exact redirect allow-list entry are saved as `https://knufl-voice-companion.alcain.chatgpt.site/`. Knufl's browser client exchanges the PKCE code at `/`; do not use the Site's `/callback` path (that belongs to the outer Sites sign-in gate). For local OAuth, add only the actual dev server's exact root URL, e.g. `http://localhost:3000/`, not a wildcard.
@@ -22,7 +24,7 @@ The Sites owner gate and Supabase app account are separate sign-ins. On another 
 ## Completed configuration
 
 - The owner created Knufl's new preview database, PostgreSQL 17 in Ireland.
-- Migrations `202609050001` through `202609050006` are applied and recorded in Supabase migration history.
+- Migrations `202609050001` through `202609050007` are applied and recorded in Supabase migration history.
 - The preview's Sites runtime holds `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` and secret `SUPABASE_SERVICE_ROLE_KEY`. Runtime revisions take effect upon preview deployment.
 - Google OAuth is configured in the dedicated **Knufl Preview** Cloud project (`knufl-preview`), using the **Knufl Preview Web** client. The owner accepted Google's required user-data policy. No billing or free trial was enabled.
 - The Google client permits only the preview origin `https://knufl-voice-companion.alcain.chatgpt.site` and the Supabase callback above. Its secret was transferred directly into Supabase, not written to the repository or chat. Nonce checks remain enabled and email remains required.
@@ -43,20 +45,17 @@ For maintenance, use the Google client and audience destinations above. Rotate t
 
 Reference: [Supabase Google OAuth](https://supabase.com/docs/guides/auth/social-login/auth-google).
 
-### OpenAI
+### OpenAI — credentials configured; media verification separate
 
-Enable the **OpenAI Developers** plugin if available so a key can be provisioned through its secure approval flow. That plugin was unavailable in this run. Manual alternative:
+The **Knufl** OpenAI project (`proj_r9lbqvj4xUy6PihoRvv7hzSj`) now has a dedicated restricted **Knufl Preview Realtime** key, allowing only model reads and Realtime requests. The secure provisioning plugin was unavailable; the owner-authorised browser flow transferred the key directly into the preview's secret `OPENAI_API_KEY` and Supabase Vault's `knufl_openai_api_key`. Neither key was written to source or chat. No further credential entry is needed. Rotate both copies together.
 
-1. Use [OpenAI project API keys](https://platform.openai.com/api-keys) in the intended API project. Confirm existing billing/credit and access to `gpt-realtime-2.1`; review project data controls before a user pilot. Do not purchase services in this setup run.
-2. Store the key in the **existing Knufl voice preview's Sites runtime settings** as secret `OPENAI_API_KEY`, never a `NEXT_PUBLIC_*` value. With the secure provisioning plugin, Codex can configure this without a chat exchange of the key.
-3. Store the same project's key in Supabase → Integrations → Vault, named **`knufl_openai_api_key`**. Use Vault's secret-entry form, not a saved SQL query containing the key. Rotate both copies together.
-4. Tell Codex both destinations are ready. Codex can apply the runtime revision, verify model/supervisor readiness, then test Realtime and provider hangup.
+Live model access returned HTTP 200, including a request from the database. The actual private hangup function returned HTTP 404 for a deliberately nonexistent call in 5,857 ms after migration 007. This verifies authenticated transport, **not termination of an active call**. The owner explicitly authorised brief paid tests and the account's existing auto-reload; no billing configuration was changed. Review the project's data controls before a broader user pilot.
 
 No database password, Supabase token or service-role key is still needed from the owner.
 
 ## Independent voice enforcement
 
-The authenticated Worker atomically reserves budget. Supabase Cron—not a browser timer or request-scoped Worker—sweeps a private durable outbox every second and calls OpenAI's `POST /v1/realtime/calls/{call_id}/hangup` with a Vault-held key. Its `http` extension requests are bounded to two seconds each and five per sweep. It does not need a callback through the private Site gate, and never puts credentials into pg_net's shared queue.
+The authenticated Worker atomically reserves budget. Supabase Cron—not a browser timer or request-scoped Worker—sweeps a private durable outbox every second and calls OpenAI's `POST /v1/realtime/calls/{call_id}/hangup` with a Vault-held key. Its `http` extension requests are bounded to eight seconds each and one per sweep, so a slow batch cannot consume five consecutive timeout windows. It does not need a callback through the private Site gate, and never puts credentials into pg_net's shared queue.
 
 | Ordinary runtime variable | Default | Bounds |
 | --- | --- | --- |
@@ -84,7 +83,7 @@ from public.voice_usage_sessions order by started_at desc limit 20;
 
 Require `healthy=true`, `providerKeyReady=true`, `overdueCalls=0` and successful Cron runs before enabling voice. Monitor outstanding hangups and bound operational-log retention. Knufl persists no raw microphone audio or full transcripts; OpenAI processes audio under that API project's settings.
 
-Live setup caveat: no-secret database HTTPS probes reached Supabase Auth (401), but the OpenAI hangup probe timed out. The installed extension also ignored the newer timeout GUC names; migration 005 uses its compatible `http_set_curlopt` API, with the two-second timeout observed live. OpenAI transport/authenticated hangup remains a verification gate, not a claimed success. If a valid-key probe still times out, resolve database-to-OpenAI egress before enabling a voice pilot.
+Live transport finding: OpenAI's absent-call hangup response took more than five seconds, exceeding the original two-second database and five-second Worker limits. Migration 007 and the Worker now allow eight seconds; the supervisor processes only one request per sweep. Migration 005's `http_set_curlopt` compatibility fix remains necessary because this hosted extension ignores newer timeout GUC names. Authenticated database egress to OpenAI works; the original timeout was not evidence of an egress block.
 
 ## Automated verification
 

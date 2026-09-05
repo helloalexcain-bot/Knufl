@@ -339,7 +339,9 @@ const hangupOpenAiCall = async (
           Authorization: `Bearer ${context.config.openAiApiKey}`,
           'X-Client-Request-Id': requestId,
         },
-        signal: AbortSignal.timeout(5_000),
+        // An already-ended call's live 404 can take over five seconds. Match
+        // the bounded independent supervisor transport; failure stays pending.
+        signal: AbortSignal.timeout(8_000),
       },
     );
   } catch {

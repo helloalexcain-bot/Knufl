@@ -3,8 +3,9 @@
 -- Everything rolls back. No test call reaches OpenAI, even with a real Vault key.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(26);
+select plan(30);
 select ok(position('http_set_curlopt' in pg_get_functiondef('knufl_private.hangup_provider_call(text)'::regprocedure))>0,'production transport uses the hosted-compatible timeout API');
+select ok(position('''CURLOPT_TIMEOUT_MS'',''8000''' in pg_get_functiondef('knufl_private.hangup_provider_call(text)'::regprocedure))>0,'production hangup permits the observed five-second provider acknowledgement with an eight-second bound');
 select set_config('knufl.test_provider_status','503',true);
 select set_config('knufl.test_queue_count',(select count(*)::text from net.http_request_queue),true);
 create or replace function knufl_private.hangup_provider_call(p_call_id text)
@@ -62,6 +63,14 @@ insert into knufl_private.voice_hangups(session_id,call_id,due_at)
 delete from auth.users where id='52000000-0000-4000-8000-000000000002';
 select ok((select due_at <= clock_timestamp() and confirmed_at is null from knufl_private.voice_hangups
   where session_id='55000000-0000-4000-8000-000000000005'),'account deletion retains and expedites remote-call cleanup');
+insert into knufl_private.voice_hangups(session_id,call_id,due_at)
+  values('56000000-0000-4000-8000-000000000006','rtc_batch_test',clock_timestamp());
+select knufl_private.supervise_voice_calls();
+select is((select count(*)::integer from knufl_private.voice_hangups where session_id in
+  ('55000000-0000-4000-8000-000000000005','56000000-0000-4000-8000-000000000006') and confirmed_at is not null),1,'one sweep performs only one bounded provider request');
+select is((select attempts from knufl_private.voice_hangups where session_id='56000000-0000-4000-8000-000000000006'),0,'later due work is preserved for the next sweep');
+select knufl_private.supervise_voice_calls();
+select ok((select confirmed_at is not null from knufl_private.voice_hangups where session_id='56000000-0000-4000-8000-000000000006'),'the next sweep completes the queued work');
 select ok(exists(select 1 from cron.job where jobname='knufl-voice-supervisor' and schedule='1 second' and active),'one-second scheduler is installed');
 select ok(not has_function_privilege('authenticated','knufl_private.hangup_provider_call(text)','EXECUTE'),'browser cannot invoke the key-bearing private transport');
 select ok(position('net.http_post' in pg_get_functiondef('knufl_private.supervise_voice_calls()'::regprocedure))=0,'supervisor does not send credentials through the PUBLIC HTTP queue');
