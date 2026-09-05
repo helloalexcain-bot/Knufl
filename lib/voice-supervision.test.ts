@@ -75,6 +75,7 @@ test('[mocked provider] malformed SDP is durably registered before cleanup; fail
     const url=String(input);calls.push(url);
     if(url.endsWith('/auth/v1/user'))return json({id:owner});
     if(url.endsWith('/claim_voice_session_for_user'))return json([{allowed:true,expires_at:'2026-09-05T23:59:59Z'}]);
+    if(url.endsWith('/voice_provider_key_matches'))return json(true);
     if(url.includes('/profiles?'))return json([{companion_name:'Moss'}]);
     if(url.endsWith('/realtime/calls'))return new Response('invalid SDP',{status:201,headers:{Location:'/v1/realtime/calls/rtc_bad'}});
     if(url.endsWith('/attach_voice_call_for_user')||url.endsWith('/request_voice_close_for_user'))return json(true);
@@ -85,4 +86,24 @@ test('[mocked provider] malformed SDP is durably registered before cleanup; fail
   assert.ok(calls.some(url=>url.endsWith('/attach_voice_call_for_user')));
   assert.ok(calls.some(url=>url.endsWith('/request_voice_close_for_user')));
   assert.equal(calls.some(url=>url.endsWith('/close_voice_session_for_user')),false);
+});
+
+test('[mocked provider] mismatched issuer/supervisor keys cannot create a remote call', async () => {
+  let providerCalls=0;
+  let released=false;
+  const response=await handleRealtimeRequest(request(),config,{fetcher:async(input,init)=>{
+    const url=String(input);
+    if(url.endsWith('/auth/v1/user'))return json({id:owner});
+    if(url.endsWith('/claim_voice_session_for_user'))return json([{allowed:true,expires_at:'2026-09-05T23:59:59Z'}]);
+    if(url.endsWith('/voice_provider_key_matches')){
+      const args=JSON.parse(String(init?.body));
+      assert.equal(args.p_user_id,owner);
+      assert.match(args.p_fingerprint,/^[a-f0-9]{64}$/);
+      assert.equal(String(init?.body).includes(config.openAiApiKey),false);
+      return json(false);
+    }
+    if(url.endsWith('/close_voice_session_for_user')){released=true;return json([{closed:true}]);}
+    providerCalls++;return json({});
+  }});
+  assert.equal(response.status,503);assert.equal(providerCalls,0);assert.equal(released,true);
 });

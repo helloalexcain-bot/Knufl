@@ -3,7 +3,8 @@
 -- Everything rolls back. No test call reaches OpenAI, even with a real Vault key.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(22);
+select plan(26);
+select ok(position('http_set_curlopt' in pg_get_functiondef('knufl_private.hangup_provider_call(text)'::regprocedure))>0,'production transport uses the hosted-compatible timeout API');
 select set_config('knufl.test_provider_status','503',true);
 select set_config('knufl.test_queue_count',(select count(*)::text from net.http_request_queue),true);
 create or replace function knufl_private.hangup_provider_call(p_call_id text)
@@ -11,6 +12,10 @@ returns integer language sql as $$ select current_setting('knufl.test_provider_s
 insert into auth.users(id) values('51000000-0000-4000-8000-000000000001'),('52000000-0000-4000-8000-000000000002');
 select vault.create_secret('test-only-never-sent', 'knufl_openai_api_key')
   where not exists (select 1 from vault.decrypted_secrets where name='knufl_openai_api_key');
+select ok(not public.voice_provider_key_matches('51000000-0000-4000-8000-000000000001',repeat('0',64)),'mismatched issuer and supervisor keys are rejected');
+select ok(public.voice_provider_key_matches('51000000-0000-4000-8000-000000000001',
+  (select encode(sha256(convert_to(decrypted_secret,'UTF8')),'hex') from vault.decrypted_secrets where name='knufl_openai_api_key')),'matching key digest is accepted without exposing the key');
+select ok(not has_function_privilege('authenticated','public.voice_provider_key_matches(uuid,text)','EXECUTE'),'browser cannot probe the private key matcher');
 update knufl_private.voice_supervisor_health set last_tick_at=null,provider_key_ready=false;
 select is((select reason from public.claim_voice_session_for_user('51000000-0000-4000-8000-000000000001',
   '53000000-0000-4000-8000-000000000003',1,1,1)),'supervisor_unavailable','no calls without independent supervision');

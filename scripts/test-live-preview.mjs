@@ -5,7 +5,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createClient } from '@supabase/supabase-js';
 import { readServerConfig } from '../server/knufl-api/config.ts';
 import { handleToolsRequest } from '../server/knufl-api/http.ts';
@@ -25,7 +26,8 @@ const config = readServerConfig({
 });
 let siteToken;
 if (origin) {
-  const input = createInterface({input: process.stdin, output: process.stdout});
+  // readline's terminal mode echoes input itself, even with stty -echo.
+  const input = createInterface({input: process.stdin, output: process.stdout, terminal:false});
   siteToken = await input.question('Ready for private preview access credential on stdin (input must be hidden):\n');
   input.close();
   assert(siteToken.length > 20, 'Private preview credential required; access is never changed.');
@@ -73,6 +75,28 @@ const snapshot = async account => Object.fromEntries(await Promise.all(snapshotT
 })));
 
 try {
+  if (origin) {
+    const publicConfigResponse=await fetch(origin+'/api/config',{headers:{'OAI-Sites-Authorization':'Bearer '+siteToken},redirect:'error'});
+    const publicConfig=await publicConfigResponse.json();
+    assert.equal(publicConfig.cloudConfigured,true);
+    assert.equal(publicConfig.supabaseUrl,config.supabaseUrl);
+    assert.equal(JSON.stringify(publicConfig).includes(config.supabaseServiceRoleKey),false);
+    passed('deployed runtime exposes only public configuration, not the service-role secret');
+    for(const name of ['hero','wave','wobble','balance','pawtap']) {
+      const response=await fetch(origin+'/bram/'+name+'.png',{headers:{'OAI-Sites-Authorization':'Bearer '+siteToken},redirect:'error'});
+      assert.equal(response.status,200);
+      const hash=data=>createHash('sha256').update(data).digest('hex');
+      assert.equal(hash(Buffer.from(await response.arrayBuffer())),hash(await readFile('public/bram/'+name+'.png')));
+    }
+    passed('all five published character assets exactly match the approved source files');
+    const gated=await fetch(origin+'/',{redirect:'manual'});
+    assert.equal(gated.status,200);
+    assert.match(await gated.text(),/signin-with-chatgpt/);
+    const legacy=await fetch('https://helloalexcain-bot.github.io/Knufl/',{redirect:'error'});
+    assert.equal(legacy.status,200);
+    assert.match(await legacy.text(),/\/Knufl\/assets\//);
+    passed('private owner gate remains active and the public GitHub Pages prototype is available');
+  }
   const a = await newAccount();
   const b = await newAccount();
   passed('two disposable users sign in through real Supabase Auth');

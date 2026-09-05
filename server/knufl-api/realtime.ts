@@ -241,6 +241,12 @@ export const createRealtimeCall = async (
   let createdCallId: string | undefined;
   let providerMayHaveCreatedCall = false;
   try {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(context.config.openAiApiKey));
+    const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    const keyMatches = await supabaseRequest<boolean>(voiceLedgerDbFor(context), '/rest/v1/rpc/voice_provider_key_matches', {
+      method: 'POST', body: { p_user_id: context.auth.user.id, p_fingerprint: fingerprint },
+    });
+    if (!keyMatches) throw new ApiError(503, 'not_configured', 'Voice issuance and server supervision must use the same configured provider key.');
     const name = await companionName(context);
     const safetyIdentifier = await privacyPreservingUserId(context.auth.user.id);
     const session = await buildRealtimeSessionConfig(

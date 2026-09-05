@@ -1186,6 +1186,7 @@ test('[mocked] Realtime SDP exchange is server configured, budgeted, and call-id
         expires_at: '2026-09-05T10:30:00.000Z',
       }]);
     }
+    if (url.endsWith('/rest/v1/rpc/voice_provider_key_matches')) return json(true);
     if (url.includes('/rest/v1/profiles?')) return json([{ companion_name: 'Mochi' }]);
     if (url === 'https://api.openai.com/v1/realtime/calls') {
       assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer server-openai-key');
@@ -1231,7 +1232,7 @@ test('[mocked] Realtime SDP exchange is server configured, budgeted, and call-id
   assert.equal(response.headers.get('x-knufl-voice-session'), VOICE_SESSION_ID);
   assert.equal(response.headers.get('x-knufl-voice-expires-at'), '2026-09-05T10:30:00.000Z');
   assert.equal(await response.text(), 'v=0\r\nm=audio 7 UDP/TLS/RTP/SAVPF 111\r\n');
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 6);
   assert.equal(realtimeSession?.model, 'gpt-realtime-2.1');
   assert.equal((realtimeSession?.audio as { output?: { voice?: string } }).output?.voice, 'marin');
   assert.match(String(realtimeSession?.instructions), /You are Mochi/);

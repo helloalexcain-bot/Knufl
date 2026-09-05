@@ -20,7 +20,7 @@ The Sites owner gate and Supabase app account are separate sign-ins. On another 
 ## Completed configuration
 
 - The owner created Knufl's new preview database, PostgreSQL 17 in Ireland.
-- Migrations `202609050001` through `202609050004` are applied and recorded in Supabase migration history.
+- Migrations `202609050001` through `202609050006` are applied and recorded in Supabase migration history.
 - The preview's Sites runtime holds `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` and secret `SUPABASE_SERVICE_ROLE_KEY`. Runtime revisions take effect upon preview deployment.
 - The independent one-second supervisor is installed. It refuses new voice calls until its Vault key is present and its heartbeat is healthy.
 - A live check found that pg_net's broad queue grants belong to the platform superuser and cannot be revoked by the project role. Migration 004 replaces that transport with bounded synchronous HTTP; provider headers exist only in private backend memory, never in the shared queue. No real key was configured while pg_net transport was active.
@@ -61,7 +61,7 @@ The authenticated Worker atomically reserves budget. Supabase Cron—not a brows
 
 An active reservation holds its remaining duration. An expired deadline does not release an unconfirmed call; actual overruns are charged. Calls end no later than UTC midnight's scheduled deadline, and account start churn is capped at six claims/minute. Exercise-day credits still use the workout's local calendar day.
 
-Failed hangups retry without releasing budget or concurrency. Cleanup survives account deletion. A missing/stale heartbeat or more than 15 seconds of overdue cleanup blocks new issuance. Browser expiry remains a UX safeguard.
+Failed hangups retry without releasing budget or concurrency. Cleanup survives account deletion. A missing/stale heartbeat or more than 15 seconds of overdue cleanup blocks new issuance. Before calling OpenAI, the Worker also verifies that its key fingerprint matches the Vault key; mismatched projects cannot accidentally treat another project's 404 as closure. Rotate both key copies together and do not change API projects while calls remain outstanding. Browser expiry remains a UX safeguard.
 
 This is independent enforcement, **not hard real-time**: scheduler/HTTP/provider outages can delay termination. A creation request that times out before returning a call ID remains reserved for operator reconciliation. SDP is never delivered without a durably attached call ID. Reconcile unknown calls through provider request logs before clearing reservations; do not clear the ledger merely to make the UI work.
 
@@ -76,6 +76,8 @@ from public.voice_usage_sessions order by started_at desc limit 20;
 ```
 
 Require `healthy=true`, `providerKeyReady=true`, `overdueCalls=0` and successful Cron runs before enabling voice. Monitor outstanding hangups and bound operational-log retention. Knufl persists no raw microphone audio or full transcripts; OpenAI processes audio under that API project's settings.
+
+Live setup caveat: no-secret database HTTPS probes reached Supabase Auth (401), but the OpenAI hangup probe timed out. The installed extension also ignored the newer timeout GUC names; migration 005 uses its compatible `http_set_curlopt` API, with the two-second timeout observed live. OpenAI transport/authenticated hangup remains a verification gate, not a claimed success. If a valid-key probe still times out, resolve database-to-OpenAI egress before enabling a voice pilot.
 
 ## Automated verification
 
