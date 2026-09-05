@@ -126,7 +126,7 @@ npm run test:live:preview
 Use disposable workout data, not the development demonstrator. Run after Google and OpenAI are configured.
 
 1. In iPhone Safari open the private preview, pass the owner gate, sign in with Google and name the companion **Pip**. The character must remain labelled a development demonstrator; the production rig is still missing.
-2. Enable microphone after the processing disclosure. Say **“Plan three sets of bench press, eight reps at sixty kilograms total, with ninety seconds rest.”** Confirm the plan. Verify **zero completed sets** before reporting completed work.
+2. Tap **Talk** and allow microphone after the processing disclosure. The connection starts muted: use **Hold to talk** or **Unmute** before speaking. Say **“Plan three sets of bench press, eight reps at sixty kilograms total, with ninety seconds rest.”** Confirm the plan. Verify **zero completed sets** before reporting completed work.
 3. Say **“I completed eight reps at sixty kilograms total”**, then **“Correct that to six reps.”** Verify one set, six reps, same ID/audit history. Say **“Start a ninety-second rest.”** Reload: same end time, not a new ninety seconds.
 4. Ask **“What is my bench-press progress today?”** The answer must use the saved six-rep set and acknowledge insufficient history for an improvement comparison. Interrupt a reply; test mute and push-to-talk. A spoken acknowledgement without a saved receipt is not success.
 5. On another device/isolated browser profile, pass the **same owner gate** and use the **same Google account**. Verify Pip, the corrected set and saved timer. Returning focus/online on device one must refresh cloud facts. Then use app account B: A's data must be absent. Automated Worker attacks complement this UI check.
