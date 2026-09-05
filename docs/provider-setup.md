@@ -11,6 +11,8 @@ Never put credentials in chat, issues, commits, screenshots or shell arguments. 
 | Supabase project | https://supabase.com/dashboard/project/ntymjigywntaczxiqpdh |
 | Supabase Auth providers | https://supabase.com/dashboard/project/ntymjigywntaczxiqpdh/auth/providers |
 | Supabase URL configuration | https://supabase.com/dashboard/project/ntymjigywntaczxiqpdh/auth/url-configuration |
+| Google Cloud OAuth clients (`knufl-preview`) | https://console.cloud.google.com/auth/clients?project=knufl-preview |
+| Google OAuth test users | https://console.cloud.google.com/auth/audience?project=knufl-preview |
 | Google/Apple provider callback | `https://ntymjigywntaczxiqpdh.supabase.co/auth/v1/callback` |
 
 The Site URL and exact redirect allow-list entry are saved as `https://knufl-voice-companion.alcain.chatgpt.site/`. Knufl's browser client exchanges the PKCE code at `/`; do not use the Site's `/callback` path (that belongs to the outer Sites sign-in gate). For local OAuth, add only the actual dev server's exact root URL, e.g. `http://localhost:3000/`, not a wildcard.
@@ -22,17 +24,22 @@ The Sites owner gate and Supabase app account are separate sign-ins. On another 
 - The owner created Knufl's new preview database, PostgreSQL 17 in Ireland.
 - Migrations `202609050001` through `202609050006` are applied and recorded in Supabase migration history.
 - The preview's Sites runtime holds `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` and secret `SUPABASE_SERVICE_ROLE_KEY`. Runtime revisions take effect upon preview deployment.
+- Google OAuth is configured in the dedicated **Knufl Preview** Cloud project (`knufl-preview`), using the **Knufl Preview Web** client. The owner accepted Google's required user-data policy. No billing or free trial was enabled.
+- The Google client permits only the preview origin `https://knufl-voice-companion.alcain.chatgpt.site` and the Supabase callback above. Its secret was transferred directly into Supabase, not written to the repository or chat. Nonce checks remain enabled and email remains required.
+- `KNUFL_AUTH_GOOGLE_ENABLED=true` is live in preview runtime revision 2. On 5 September 2026, real Google consent, the Supabase callback, signed-in cloud onboarding and session persistence after refresh all passed in Chrome. The owner's import choice was left untouched. This does not establish physical-iPhone or cross-device OAuth verification.
+- Following Google setup, all 13 deployed integration groups passed again, including privileged cross-account mutation checks; both disposable accounts and their records were removed. All 96 unit/contract tests, lint and TypeScript passed. Signed-in onboarding was inspected at 390×844 and 1280×900, with no captured browser warnings/errors. OpenAI tests remain simulated, not live-provider evidence.
 - The independent one-second supervisor is installed. It refuses new voice calls until its Vault key is present and its heartbeat is healthy.
 - A live check found that pg_net's broad queue grants belong to the platform superuser and cannot be revoked by the project role. Migration 004 replaces that transport with bounded synchronous HTTP; provider headers exist only in private backend memory, never in the shared queue. No real key was configured while pg_net transport was active.
 
 ## Smallest remaining account setup
 
-### Google
+### Google — complete for the owner's preview
 
-1. Open [Google Auth Platform → Clients](https://console.cloud.google.com/auth/clients) in the intended Google Cloud project. Configure Branding/Audience if prompted; while the consent app is in Testing, add the intended Google email under Audience → Test users.
-2. Create a **Web application** OAuth client with redirect URI exactly `https://ntymjigywntaczxiqpdh.supabase.co/auth/v1/callback`. Knufl uses Supabase's redirect flow, not Google One Tap.
-3. Enter the client ID and secret directly into the Google provider at the Supabase destination above, enable it and save. Do not send the secret to Codex.
-4. Tell Codex Google is ready. Codex can verify readiness, set the ordinary preview flag `KNUFL_AUTH_GOOGLE_ENABLED=true`, and redeploy privately. The button stays hidden until that step.
+No further Google credential setup is needed. Use **Continue with Google** on the private preview, with the owner's configured test account. The consent app remains **External / Testing**, with one owner test user. Its configured scopes are only `openid`, `userinfo.email` and `userinfo.profile`; there are no sensitive or restricted scopes.
+
+The Google screen currently identifies the Supabase project domain rather than a verified Knufl brand. Public brand verification is not complete: Google still flags incomplete branding, and public privacy/terms links remain unset. This did not block the observed test-account sign-in. Do not publish the OAuth app or broaden its test audience in this preview pass. An additional device can use the same Google test account after passing the unchanged Sites owner gate.
+
+For maintenance, use the Google client and audience destinations above. Rotate the client secret directly in Supabase's Google provider if necessary. Knufl uses Supabase's redirect flow, not Google One Tap. Preserve the exact callback; never replace it with the private Site's `/callback` route.
 
 Reference: [Supabase Google OAuth](https://supabase.com/docs/guides/auth/social-login/auth-google).
 
