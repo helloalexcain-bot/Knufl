@@ -175,6 +175,22 @@ test('an audition opens no microphone and selects a fresh server-checked voice',
   }finally{restore();}
 });
 
+test('old audio ending does not signal a completed turn while the next response is generating', async () => {
+  const peer = new FakePeerConnection();
+  const restore = installBrowserMocks({getUserMedia: async () => fakeStream().stream,
+    createPeer: () => peer, fetch: async () => new Response('answer-sdp')});
+  const {events, statuses} = clientEvents();
+  const client = new KnuflRealtimeClient(events);
+  try {
+    await client.connect('test'); peer.channel.open();
+    client.sendText('What is my progress?');
+    peer.channel.emit('message', {data: JSON.stringify({type:'output_audio_buffer.stopped'})});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(statuses.at(-1), 'thinking');
+    await client.disconnect();
+  } finally { restore(); }
+});
+
 test('a connected peer is not ready for commands until the data channel opens', async () => {
   const peer = new FakePeerConnection();
   const restore = installBrowserMocks({

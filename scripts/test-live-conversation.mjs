@@ -30,11 +30,11 @@ import {trainingContextFrom,resolvedSetArguments} from '/context.js';
 const log=document.querySelector('#log'),status=document.querySelector('#status');
 const show=text=>{log.textContent+='\\n'+text;fetch('/event',{method:'POST',body:text});};
 const check=(value,label)=>{if(!value)throw Error(label);show('PASS: '+label);};
-let voice,ctx={},settle,timer,timeout,tools=[],peak=0;
+let voice,ctx={},settle,timer,timeout,tools=[],peak=0,finalReply=false;
 async function tool(name,args={}){const response=await fetch('/tool',{method:'POST',body:JSON.stringify({name,arguments:args})});const data=await response.json();if(!response.ok)throw Error(data.error?.message||'Tool failed');return data.result;}
 async function refresh(){ctx=await tool('get_session_context');voice?.updateTrainingContext(trainingContextFrom(ctx));return ctx;}
 async function execute(call){
- const op='voice:'+call.callId;let args={...call.arguments};const name=call.name;tools.push(name);
+ const op='voice:'+call.callId;let args={...call.arguments};const name=call.name;tools.push(name);finalReply=false;
  await refresh();let t=trainingContextFrom(ctx);
  if(name==='record_set'&&!t.sessionId&&t.draft){await tool('start_workout',{...t.draft,operationKey:op+':start',localDate:new Date().toLocaleDateString('en-CA'),timezone:Intl.DateTimeFormat().resolvedOptions().timeZone});await refresh();t=trainingContextFrom(ctx);}
  if(name==='record_set')args=resolvedSetArguments(args,ctx);
@@ -48,14 +48,14 @@ async function execute(call){
  await refresh();show('TOOL '+name+': '+JSON.stringify(result));
  return {ok:true,...result,trainingContext:trainingContextFrom(ctx)};
 }
-function statusChanged(value){status.textContent=value;clearTimeout(timer);if(settle&&['listening','mic-off'].includes(value))timer=setTimeout(()=>{const done=settle;settle=undefined;clearTimeout(timeout);done();},650);}
+function statusChanged(value){status.textContent=value;clearTimeout(timer);if(settle&&['listening','mic-off'].includes(value))timer=setTimeout(()=>{if(!finalReply)return;const done=settle;settle=undefined;clearTimeout(timeout);done();},1000);}
 async function connect(){
  await voice?.disconnect();
- voice=new KnuflRealtimeClient({onStatus:statusChanged,onAmplitude:a=>{peak=Math.max(peak,a);},onTranscript:(role,text)=>show(role.toUpperCase()+': '+text),onInterrupted:()=>show('Playback interrupted'),onError:message=>show('ERROR: '+message),onToolCall:execute});
+ voice=new KnuflRealtimeClient({onStatus:statusChanged,onAmplitude:a=>{peak=Math.max(peak,a);},onTranscript:(role,text)=>{if(role==='assistant')finalReply=true;show(role.toUpperCase()+': '+text);},onInterrupted:()=>show('Playback interrupted'),onError:message=>show('ERROR: '+message),onToolCall:execute});
  await refresh();voice.setMuted(true);await voice.connect('disposable-harness',{microphone:false});
  await new Promise((resolve,reject)=>{let n=0;const poll=setInterval(()=>{if(voice.connected){clearInterval(poll);resolve();}else if(n++>100){clearInterval(poll);reject(Error('Connection timeout'));}},100);});
 }
-async function turn(text){tools=[];peak=0;const done=new Promise((resolve,reject)=>{settle=resolve;timeout=setTimeout(()=>{settle=undefined;reject(Error('Response timeout'));},45000);});voice.sendText(text);await done;await refresh();show('Actual output-audio RMS peak: '+peak.toFixed(3));}
+async function turn(text){tools=[];peak=0;finalReply=false;const done=new Promise((resolve,reject)=>{settle=resolve;timeout=setTimeout(()=>{settle=undefined;reject(Error('Response timeout'));},45000);});voice.sendText(text);await done;await refresh();show('Actual output-audio RMS peak: '+peak.toFixed(3));}
 document.querySelector('#run').onclick=async event=>{
  event.target.disabled=true;
  try{

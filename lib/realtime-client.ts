@@ -408,7 +408,9 @@ export class KnuflRealtimeClient {
       case 'output_audio_buffer.cleared':
         this.#outputPlaying = false;
         this.#events.onAmplitude(0);
-        this.#events.onStatus(this.#muted ? 'mic-off' : 'listening');
+        // The previous utterance may finish while a tool's follow-up response
+        // is still generating. Keep that gap thinking, not a completed turn.
+        this.#events.onStatus(this.#responseInProgress ? 'thinking' : this.#muted ? 'mic-off' : 'listening');
         if (this.#audition) void this.disconnect().then(() => this.#events.onStatus('idle'));
         break;
       case 'response.done':

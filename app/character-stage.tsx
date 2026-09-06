@@ -26,7 +26,7 @@ export function ArticulatedCharacter({ snapshot, name, mapping=STUDY_RIG }: { sn
       renderer.setPixelRatio(Math.min(window.devicePixelRatio,1.5));
       renderer.outputColorSpace=T.SRGBColorSpace;
       renderer.toneMapping=T.ACESFilmicToneMapping; renderer.toneMappingExposure=1.25;
-      renderer.shadowMap.enabled=true; renderer.shadowMap.type=T.PCFSoftShadowMap;
+      renderer.shadowMap.enabled=true; renderer.shadowMap.type=T.PCFShadowMap;
       renderer.domElement.setAttribute('aria-hidden','true'); host.append(renderer.domElement);
       scene=new T.Scene();
       const camera=new T.PerspectiveCamera(32,1,.1,30); camera.position.set(.12,2.05,7.3); camera.lookAt(0,1.72,0);
