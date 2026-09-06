@@ -53,6 +53,12 @@ const authenticatedRequest = (
 
 const authResponse = (): Response => json({ id: USER_ID, email: 'member@example.com' });
 
+test('[mocked] auditions reject another authenticated account before budget or provider calls',async()=>{
+  let calls=0;
+  const response=await handleRealtimeRequest(authenticatedRequest('/api/realtime?audition=cedar','v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n','application/sdp'),{...config,previewOwnerId:'different-owner'},{fetcher:async()=>{calls++;return authResponse();}});
+  assert.equal(response.status,403);assert.equal(calls,1);
+});
+
 test('[mocked] tool contracts reject owner injection and invalid load ambiguity', () => {
   assert.throws(
     () => parseToolCall({
@@ -233,7 +239,7 @@ test('[mocked] same-origin API policy rejects a foreign browser origin', async (
   assert.equal(payload.error.code, 'forbidden');
 });
 
-test('[mocked] tool endpoint authenticates bearer and keeps a draft unsaved', async () => {
+test('[mocked] tool endpoint authenticates bearer and remembers a draft without completed work', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fetcher: typeof fetch = async (input, init) => {
     calls.push({ url: String(input), init });
@@ -264,7 +270,9 @@ test('[mocked] tool endpoint authenticates bearer and keeps a draft unsaved', as
   );
 
   assert.equal(response.status, 200);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
+  assert.ok(calls[1].url.endsWith('/rpc/put_training_state_for_user'));
+  assert.equal(JSON.parse(String(calls[1].init?.body)).p_user_id, USER_ID);
   assert.equal(calls[0]?.url, `${config.supabaseUrl}/auth/v1/user`);
   assert.equal(new Headers(calls[0]?.init?.headers).get('authorization'), 'Bearer user-access-token');
   const payload = await response.json() as {
@@ -275,7 +283,7 @@ test('[mocked] tool endpoint authenticates bearer and keeps a draft unsaved', as
   assert.equal(payload.ok, true);
   assert.equal(payload.tool, 'draft_workout');
   assert.equal(payload.result.saved, false);
-  assert.equal(payload.result.confirmationRequired, true);
+  assert.equal(payload.result.confirmationRequired, false);
 });
 
 test('[mocked] tool latency logs include only safe operational metadata', async () => {
@@ -358,6 +366,11 @@ test('[mocked] mutation forwarding derives every owner and separates receipt aut
       const body = JSON.parse(String(init?.body));
       storedBodies.push({ url, body });
       return json([body]);
+    }
+    if (url.endsWith('/rest/v1/rpc/put_training_state_for_user')) {
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.p_user_id, USER_ID);
+      return json(body.p_patch);
     }
     if (url.endsWith('/rest/v1/exercise_instances?on_conflict=id') && method === 'POST') {
       const body = JSON.parse(String(init?.body));
@@ -539,6 +552,11 @@ test('[mocked] concurrent retries execute only the holder of the atomic receipt 
       signalSessionInsert?.();
       await sessionInsertReleased;
       return json([JSON.parse(String(init?.body))]);
+    }
+    if (url.endsWith('/rest/v1/rpc/put_training_state_for_user')) {
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.p_user_id, USER_ID);
+      return json(body.p_patch);
     }
     if (url.endsWith('/rest/v1/exercise_instances?on_conflict=id') && method === 'POST') {
       exerciseInsertCount += 1;
@@ -1188,6 +1206,7 @@ test('[mocked] Realtime SDP exchange is server configured, budgeted, and call-id
     }
     if (url.endsWith('/rest/v1/rpc/voice_provider_key_matches')) return json(true);
     if (url.includes('/rest/v1/profiles?')) return json([{ companion_name: 'Mochi' }]);
+    if (url.includes('/rest/v1/') && !url.includes('/rpc/') && (init?.method ?? 'GET') === 'GET') return json([]);
     if (url === 'https://api.openai.com/v1/realtime/calls') {
       assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer server-openai-key');
       assert.equal(
@@ -1232,7 +1251,8 @@ test('[mocked] Realtime SDP exchange is server configured, budgeted, and call-id
   assert.equal(response.headers.get('x-knufl-voice-session'), VOICE_SESSION_ID);
   assert.equal(response.headers.get('x-knufl-voice-expires-at'), '2026-09-05T10:30:00.000Z');
   assert.equal(await response.text(), 'v=0\r\nm=audio 7 UDP/TLS/RTP/SAVPF 111\r\n');
-  assert.equal(calls.length, 6);
+  assert.ok(calls.length > 6, 'connection retrieves saved context before the provider');
+  assert.match(String(realtimeSession?.instructions), /Verified workout facts at connection/);
   assert.equal(realtimeSession?.model, 'gpt-realtime-2.1');
   assert.equal((realtimeSession?.audio as { output?: { voice?: string } }).output?.voice, 'marin');
   assert.match(String(realtimeSession?.instructions), /You are Mochi/);

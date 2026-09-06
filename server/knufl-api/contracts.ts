@@ -4,6 +4,7 @@ export const TOOL_NAMES = [
   'get_session_context',
   'draft_workout',
   'start_workout',
+  'select_exercise',
   'record_set',
   'correct_set',
   'undo_last_action',
@@ -42,13 +43,15 @@ export interface ExerciseDraft {
 
 export interface ToolArguments {
   get_session_context: { sessionId?: string };
-  draft_workout: { title?: string; exercises: ExerciseDraft[] };
+  draft_workout: { title?: string; exercises: ExerciseDraft[]; superset?: boolean };
+  select_exercise: { operationKey: string; exercise?: string; exerciseInstanceId?: string; clear?: boolean };
   start_workout: {
     operationKey: string;
     localDate: string;
     timezone: string;
     title?: string;
     plannedOccurrenceId?: string;
+    superset?: boolean;
     exercises: ExerciseDraft[];
   };
   record_set: {
@@ -197,6 +200,7 @@ export const REALTIME_TOOL_DEFINITIONS: JsonSchema[] = [
     {
       title: stringSchema('A short optional workout title.'),
       exercises: { type: 'array', minItems: 1, maxItems: 30, items: exerciseDraftSchema },
+      superset: { type: 'boolean', description: 'True only when the user plans alternating/superset exercises; never assume an automatic order.' },
     },
     ['exercises'],
   ),
@@ -209,24 +213,30 @@ export const REALTIME_TOOL_DEFINITIONS: JsonSchema[] = [
       timezone: timezoneSchema,
       title: stringSchema('A short optional workout title.'),
       plannedOccurrenceId: identifierSchema('Optional scheduled occurrence being started.'),
+      superset: { type: 'boolean' },
       exercises: { type: 'array', minItems: 1, maxItems: 30, items: exerciseDraftSchema },
     },
     ['operationKey', 'localDate', 'timezone', 'exercises'],
   ),
   tool(
     'record_set',
-    'Record one set only after the user reports it completed. Identify the exercise by name and clarify ambiguous exercises or units.',
+    'Save an explicit completed-set report immediately. Omit exercise/load/units when the active context supplies them. Never infer completed reps from the plan; sameAgain explicitly repeats the last actual set. Clarify only genuinely missing/ambiguous facts.',
     {
       operationKey: operationKeySchema,
-      exercise: stringSchema('The completed exercise name from the user. Omit only when the active workout has one exercise.'),
+      exercise: stringSchema('The completed exercise name from the user. Omit when trainingContext has an unambiguous activeExercise.'),
       reps: { type: 'integer', minimum: 1, maximum: 1000 },
+      sameAgain: { type: 'boolean', description: 'Only true for an explicit completed same-again report. Reuse the last actual set, never planned reps.' },
       ...loadProperties,
       effort: { type: 'number', minimum: 0, maximum: 10 },
       feeling: stringSchema('Optional user-provided feeling. Never invent one.'),
       completedAt: { type: 'string', format: 'date-time' },
     },
-    ['operationKey', 'reps'],
+    ['operationKey'],
   ),
+  tool('select_exercise', 'Set the explicitly named active exercise for subsequent shorthand reports. In a superset select or name the exercise for each completed report; clear removes the cursor.', {
+    operationKey: operationKeySchema, exercise: stringSchema('Exact exercise name from the workout.'),
+    exerciseInstanceId: identifierSchema('Known exercise ID.'), clear: { type: 'boolean' },
+  }, ['operationKey']),
   tool(
     'correct_set',
     'Correct the linked set in place, preserving its identity and revision history.',
@@ -544,18 +554,28 @@ const parseArguments = <Name extends ToolName>(
       rejectUnknown(raw, ['sessionId']);
       return cleanOptional({ sessionId: identifierValue(raw.sessionId, 'sessionId', true) }) as ToolArguments[Name];
     case 'draft_workout':
-      rejectUnknown(raw, ['title', 'exercises']);
+      rejectUnknown(raw, ['title', 'exercises', 'superset']);
+      if (raw.superset !== undefined && typeof raw.superset !== 'boolean') throw new ApiError(400,'validation_error','superset must be boolean.');
       return cleanOptional({
         title: textValue(raw.title, 'title', { optional: true, maximum: 120 }),
         exercises: exerciseDrafts(raw.exercises),
+        superset: raw.superset,
       }) as ToolArguments[Name];
+    case 'select_exercise':
+      rejectUnknown(raw, ['operationKey', 'exercise', 'exerciseInstanceId', 'clear']);
+      if (raw.clear !== undefined && typeof raw.clear !== 'boolean') throw new ApiError(400,'validation_error','clear must be boolean.');
+      return cleanOptional({ operationKey: operationKeyValue(raw.operationKey),
+        exercise: textValue(raw.exercise,'exercise',{optional:true,maximum:160}),
+        exerciseInstanceId: identifierValue(raw.exerciseInstanceId,'exerciseInstanceId',true), clear: raw.clear }) as ToolArguments[Name];
     case 'start_workout':
+      if (raw.superset !== undefined && typeof raw.superset !== 'boolean') throw new ApiError(400,'validation_error','superset must be boolean.');
       rejectUnknown(raw, [
         'operationKey',
         'localDate',
         'timezone',
         'title',
         'plannedOccurrenceId',
+        'superset',
         'exercises',
       ]);
       return cleanOptional({
@@ -564,6 +584,7 @@ const parseArguments = <Name extends ToolName>(
         timezone: timezoneValue(raw.timezone),
         title: textValue(raw.title, 'title', { optional: true, maximum: 120 }),
         plannedOccurrenceId: identifierValue(raw.plannedOccurrenceId, 'plannedOccurrenceId', true),
+        superset: raw.superset === true,
         exercises: exerciseDrafts(raw.exercises),
       }) as ToolArguments[Name];
     case 'record_set':

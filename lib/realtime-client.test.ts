@@ -75,6 +75,7 @@ class FakePeerConnection {
   }
 
   addTrack(): void {}
+  addTransceiver(): void {}
   createDataChannel(): RTCDataChannel { return this.channel as unknown as RTCDataChannel; }
   addEventListener(): void {}
   createOffer(): Promise<RTCSessionDescriptionInit> { return this.createOfferResult(); }
@@ -147,6 +148,32 @@ const clientEvents = () => {
   };
   return { events, statuses, errors };
 };
+
+test('playout, not response generation, holds the speaking state; mute does not stop the mouth', async()=>{
+  const peer=new FakePeerConnection();
+  const restore=installBrowserMocks({getUserMedia:async()=>fakeStream().stream,createPeer:()=>peer,fetch:async()=>new Response('answer-sdp')});
+  const {events,statuses}=clientEvents();const client=new KnuflRealtimeClient(events);
+  try{
+    await client.connect('test');peer.channel.open();
+    peer.channel.emit('message',{data:JSON.stringify({type:'output_audio_buffer.started'})});
+    await new Promise(r=>setImmediate(r));
+    peer.channel.emit('message',{data:JSON.stringify({type:'response.done',response:{status:'completed',output:[]}})});
+    await new Promise(r=>setImmediate(r));
+    assert.equal(statuses.at(-1),'speaking');client.setMuted(true);assert.equal(statuses.at(-1),'speaking');
+    client.interrupt();assert.equal(statuses.at(-1),'mic-off');
+    await client.disconnect();
+  }finally{restore();}
+});
+
+test('an audition opens no microphone and selects a fresh server-checked voice',async()=>{
+  const peer=new FakePeerConnection();let microphone=0;const urls:string[]=[];
+  const restore=installBrowserMocks({getUserMedia:async()=>{microphone++;return fakeStream().stream;},createPeer:()=>peer,fetch:async(url)=>{urls.push(String(url));return new Response('answer-sdp');}});
+  const client=new KnuflRealtimeClient(clientEvents().events);
+  try{await client.connect('test',{microphone:false,auditionVoice:'cedar'});peer.channel.open();
+    assert.equal(microphone,0);assert.equal(urls[0],'/api/realtime?audition=cedar');
+    assert.ok(peer.channel.sent.some(s=>s.includes('Read the audition lines now')));await client.disconnect();
+  }finally{restore();}
+});
 
 test('cancelled and incomplete Realtime responses cannot authorize tools', () => {
   for (const status of ['cancelled', 'incomplete', 'failed']) {

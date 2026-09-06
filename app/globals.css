@@ -698,6 +698,12 @@ blockquote {
 .voice-character--thinking .character { animation: voice-think 1.1s ease-in-out infinite alternate; }
 .voice-character--resting .character { animation: voice-rest 3.2s ease-in-out infinite; }
 .voice-character--celebrating .character { animation: paw-tap .72s cubic-bezier(.2,.8,.25,1) both; }
+/* The GLB owns motion. Approved still fallback must never masquerade as a rig. */
+.articulated-character { position: absolute; inset: -6% -9% -4%; display: block; }
+.articulated-character canvas { display: block; width: 100%; height: 100%; }
+.voice-character .articulated-character .character { animation: none; transform: none; }
+.rig-fallback { position:absolute; bottom:0; left:0; right:0; font-size:12px; }
+.audition-actions { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:24px; }
 .voice-status { z-index: 4; display: flex; align-items: center; gap: 7px; margin-top: -4px; border: 1px solid var(--line); border-radius: 999px; padding: 6px 11px; background: rgba(255, 253, 247, .82); color: var(--ink-muted); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .09em; }
 .voice-status__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sage-dark); }
 .voice-status--listening .voice-status__dot { background: #438065; box-shadow: 0 0 0 4px rgba(67,128,101,.12); }

@@ -9,6 +9,7 @@ import {
   type RealtimeDependencies,
 } from './realtime.ts';
 import { executeTool, type ToolDependencies } from './tools.ts';
+import { AUDITION_VOICES, type AuditionVoice } from '../../lib/voice-audition.ts';
 
 export interface HttpDependencies extends RealtimeDependencies, ToolDependencies {}
 
@@ -148,12 +149,16 @@ export const handleRealtimeRequest = (
     }
     const auth = await authenticateSupabaseUser(request, config, dependencies?.fetcher);
     const offerSdp = await readBoundedText(request, 64 * 1024);
+    const audition = new URL(request.url).searchParams.get('audition');
+    if (audition && (auth.user.id !== config.previewOwnerId || !AUDITION_VOICES.includes(audition as AuditionVoice))) {
+      throw new ApiError(403, 'forbidden', 'Voice auditions are only available to the preview owner.');
+    }
     if (!offerSdp.startsWith('v=0') || !offerSdp.includes('\nm=')) {
       throw new ApiError(400, 'validation_error', 'The WebRTC offer is not valid SDP.');
     }
     const startedAt = Date.now();
     try {
-      const result = await createRealtimeCall({ auth, config, dependencies }, offerSdp, requestId);
+      const result = await createRealtimeCall({ auth, config, dependencies, auditionVoice: audition as AuditionVoice | undefined }, offerSdp, requestId);
       logOutcome('knufl_realtime_outcome', requestId, startedAt, 'succeeded');
       const headers = responseHeaders('application/sdp');
       headers.set('X-Knufl-Voice-Session', result.voiceSessionId);

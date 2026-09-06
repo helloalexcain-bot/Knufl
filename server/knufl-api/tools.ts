@@ -7,6 +7,8 @@ import {
 import type { AuthContext } from './auth.ts';
 import type { KnuflServerConfig } from './config.ts';
 import { ApiError } from './errors.ts';
+import { trainingContextFrom, setReceipt, exerciseNameMatches } from '../../lib/training-context.ts';
+import { AUDITION_VOICES } from '../../lib/voice-audition.ts';
 import {
   deterministicUuid,
   encodeFilter,
@@ -317,7 +319,7 @@ const requireActiveSession = async (
   return session;
 };
 
-const getSessionContext = async (
+export const getSessionContext = async (
   context: ToolExecutionContext,
   args: ToolArguments['get_session_context'],
 ): Promise<unknown> => {
@@ -392,6 +394,7 @@ const getSessionContext = async (
   const milestones = rows(milestonesPayload);
   const sharedContext = {
     companionName: firstRow(profiles)?.companion_name ?? 'Knufl',
+    auditionVoices: context.config.previewOwnerId === context.auth.user.id ? AUDITION_VOICES : [],
     preferences: firstRow(preferencesPayload) ?? null,
     plans: rows(plansPayload),
     planExercises: rows(planExercisesPayload),
@@ -452,13 +455,29 @@ const getSessionContext = async (
   };
 };
 
-const draftWorkout = (args: ToolArguments['draft_workout']): unknown => ({
-  saved: false,
-  title: args.title ?? 'Workout',
-  exercises: args.exercises,
-  confirmationRequired: true,
-  note: 'This is planned work. No completed sets have been recorded.',
-});
+const putTrainingState = (context: ToolExecutionContext, patch: DataRow) =>
+  supabaseRequest<DataRow>(writeDbFor(context), '/rest/v1/rpc/put_training_state_for_user', {
+    method: 'POST', body: { p_user_id: context.auth.user.id, p_patch: patch },
+  });
+
+const draftWorkout = async (context: ToolExecutionContext, args: ToolArguments['draft_workout']): Promise<unknown> => {
+  const draft = { title: args.title ?? 'Workout', exercises: args.exercises, superset: args.superset ?? false };
+  await putTrainingState(context, { draft });
+  return { saved: false, draftSaved: true, ...draft, confirmationRequired: false,
+    note: 'Plan remembered. No completed sets recorded. An explicit completed-set report can start this plan without another confirmation.' };
+};
+
+const selectExercise = async (context: ToolExecutionContext, args: ToolArguments['select_exercise']) =>
+  withIdempotency(context, args.operationKey, 'select_exercise', async () => {
+    const ctx = await getSessionContext(context, {}) as DataRow;
+    const session = ctx.session as DataRow | null;
+    if (!session || session.status !== 'active') throw new ApiError(409,'conflict','Start the workout before selecting an exercise.');
+    const matches = rows(ctx.exercises).filter(e => args.exerciseInstanceId
+      ? e.id === args.exerciseInstanceId : exerciseNameMatches(String(e.display_name), args.exercise ?? ''));
+    if (!args.clear && matches.length !== 1) throw new ApiError(400,'validation_error','Which exercise should be active?');
+    const state = await putTrainingState(context, { sessionId: session.id, exerciseId: args.clear ? null : matches[0].id });
+    return { value: { saved: true, trainingContext: trainingContextFrom({ ...ctx, preferences: { ...(ctx.preferences as DataRow), training_context: state } }) } };
+  });
 
 const startWorkout = async (
   context: ToolExecutionContext,
@@ -505,6 +524,7 @@ const startWorkout = async (
       })),
     );
     await insertRows(context, 'exercise_instances', instances.map(cleanRecord), { idempotent: true });
+    await putTrainingState(context, { sessionId, exerciseId: instances.length === 1 ? instances[0].id : null, superset: args.superset ?? false, draft: null });
 
     return {
       entityType: 'workout_session',
@@ -526,6 +546,7 @@ const startWorkout = async (
           plannedReps: exercise.planned_reps,
           plannedLoad: exercise.planned_load,
           plannedLoadUnit: exercise.planned_load_unit,
+          plannedLoadMode: exercise.planned_load_mode,
           restSeconds: exercise.rest_seconds,
         })),
         completedSetCount: 0,
@@ -598,6 +619,7 @@ const recordSet = async (
         set: saved,
         exercise: { id: exercise.id, name: exercise.display_name },
         restSeconds: exercise.rest_seconds ?? null,
+        spokenSummary: setReceipt(saved, String(exercise.display_name)),
         workoutCompleted: false,
       },
     };
@@ -745,7 +767,8 @@ const correctSet = async (
     return {
       entityType: 'completed_set',
       entityId: args.setId,
-      value: { saved: true, set: updated, before },
+      value: { saved: true, set: updated, before,
+        spokenSummary: args.reps !== undefined ? `${updated.reps}, not ${before.reps}. Fixed.` : 'Saved set corrected.' },
     };
   });
 
@@ -1706,7 +1729,10 @@ export const executeTool = async (
       result = await getSessionContext(context, call.arguments);
       break;
     case 'draft_workout':
-      result = draftWorkout(call.arguments);
+      result = await draftWorkout(context, call.arguments);
+      break;
+    case 'select_exercise':
+      result = await selectExercise(context, call.arguments);
       break;
     case 'start_workout':
       result = await startWorkout(context, call.arguments);

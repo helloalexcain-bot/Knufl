@@ -71,7 +71,8 @@ The authenticated Worker atomically reserves budget. Supabase Cron—not a brows
 | Ordinary runtime variable | Default | Bounds |
 | --- | --- | --- |
 | `KNUFL_REALTIME_MODEL` | `gpt-realtime-2.1` | Must be available to the API project |
-| `KNUFL_REALTIME_VOICE` | `marin` | Provider-supported voice |
+| `KNUFL_REALTIME_VOICE` | `cedar` | Provisional; supported Realtime voice |
+| `KNUFL_PREVIEW_OWNER_ID` | unset | Exact Supabase owner UUID; enables owner-only auditions |
 | `KNUFL_MAX_ACTIVE_REALTIME_SESSIONS` | `1` | 1–3 |
 | `KNUFL_DAILY_REALTIME_MINUTES` | `60` | 1–240, UTC usage day |
 | `KNUFL_MAX_REALTIME_SESSION_MINUTES` | `30` | 1–60 |
@@ -125,8 +126,8 @@ npm run test:live:preview
 
 Use disposable workout data, not the development demonstrator. Run after Google and OpenAI are configured.
 
-1. In iPhone Safari open the private preview, pass the owner gate, sign in with Google and name the companion **Pip**. The character must remain labelled a development demonstrator; the production rig is still missing.
-2. Tap **Talk** and allow microphone after the processing disclosure. The connection starts muted: use **Hold to talk** or **Unmute** before speaking. Say **“Plan three sets of bench press, eight reps at sixty kilograms total, with ninety seconds rest.”** Confirm the plan. Verify **zero completed sets** before reporting completed work.
+1. In iPhone Safari open the private preview, pass the owner gate and sign in with Google. Keep the existing companion name. The 3D character is labelled a provisional articulated study, not the final approved sculpt. In Settings, the owner can audition Cedar, Ash and Ballad using identical original lines. Samples request no microphone, start fresh calls, close after playback and use the normal voice budget with a one-minute maximum.
+2. Tap **Talk** and allow microphone after the processing disclosure. The connection starts muted: use **Hold to talk** or **Unmute** before speaking. Say **“Plan bench press, three sets of eight at sixty kilograms total, with ninety seconds rest.”** Verify **zero completed sets**, then say **“First set done, eight reps.”** This must save directly without asking whether it was bench. Say **“Actually six”**, then **“Same again”**: expect two sets of six, not planned eight. Stop and reconnect; **“Next set done, eight reps”** must recover the saved bench/load context.
 3. Say **“I completed eight reps at sixty kilograms total”**, then **“Correct that to six reps.”** Verify one set, six reps, same ID/audit history. Say **“Start a ninety-second rest.”** Reload: same end time, not a new ninety seconds.
 4. Ask **“What is my bench-press progress today?”** The answer must use the saved six-rep set and acknowledge insufficient history for an improvement comparison. Interrupt a reply; test mute and push-to-talk. A spoken acknowledgement without a saved receipt is not success.
 5. On another device/isolated browser profile, pass the **same owner gate** and use the **same Google account**. Verify Pip, the corrected set and saved timer. Returning focus/online on device one must refresh cloud facts. Then use app account B: A's data must be absent. Automated Worker attacks complement this UI check.

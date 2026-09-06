@@ -25,6 +25,7 @@ export type ToolName =
   | 'get_session_context'
   | 'draft_workout'
   | 'start_workout'
+  | 'select_exercise'
   | 'record_set'
   | 'correct_set'
   | 'undo_last_action'
@@ -370,6 +371,13 @@ export function runDemoTool(current: DemoState, request: ToolRequest): { state: 
   const args = request.arguments;
 
   switch (request.name) {
+    case 'select_exercise': {
+      const matches = state.domain.exercises.filter(e => e.sessionId === state.currentSessionId &&
+        (e.id === args.exerciseInstanceId || e.displayName.toLowerCase() === String(args.exercise ?? '').toLowerCase()));
+      if (!args.clear && matches.length !== 1) throw new Error('Which exercise are you moving to?');
+      state.currentExerciseId = args.clear ? undefined : matches[0].id;
+      return { state, result: { ok: true, tool: request.name, message: args.clear ? 'Exercise selection cleared.' : `${matches[0].displayName} is active.`, data: contextData(state) } };
+    }
     case 'get_session_context':
       return { state, result: { ok: true, tool: request.name, message: 'Current saved context loaded.', data: contextData(state) } };
 

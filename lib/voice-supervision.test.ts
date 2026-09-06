@@ -95,6 +95,7 @@ test('[mocked provider] malformed SDP is durably registered before cleanup; fail
     if(url.endsWith('/claim_voice_session_for_user'))return json([{allowed:true,expires_at:'2026-09-05T23:59:59Z'}]);
     if(url.endsWith('/voice_provider_key_matches'))return json(true);
     if(url.includes('/profiles?'))return json([{companion_name:'Moss'}]);
+    if(url.includes('/rest/v1/')&&!url.includes('/rpc/'))return json([]);
     if(url.endsWith('/realtime/calls'))return new Response('invalid SDP',{status:201,headers:{Location:'/v1/realtime/calls/rtc_bad'}});
     if(url.endsWith('/attach_voice_call_for_user')||url.endsWith('/request_voice_close_for_user'))return json(true);
     if(url.endsWith('/hangup'))return json({},500);

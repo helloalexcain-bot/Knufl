@@ -1,8 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
-import { Brand, Button, Character, type CharacterPose } from './components';
+import { Brand, Button, Character } from './components';
+import { ArticulatedCharacter } from './character-stage';
+import { AUDITION_VOICES, type AuditionVoice } from '@/lib/voice-audition';
 import {
   CharacterController,
   createInitialCharacterSnapshot,
@@ -39,6 +41,7 @@ import {
 } from '@/lib/pending-queue';
 import { projectPendingToolOperation } from '@/lib/pending-context';
 import { KnuflRealtimeClient, type VoiceStatus } from '@/lib/realtime-client';
+import { trainingContextFrom, resolvedSetArguments } from '@/lib/training-context';
 import { STORAGE_KEY } from '@/lib/storage';
 import {
   activeSessionFrom,
@@ -83,6 +86,7 @@ interface ImportPreviewState {
 interface PlannedWorkout {
   title: string;
   exercises: Array<Record<string, unknown>>;
+  superset?: boolean;
 }
 
 interface MemoryDraft {
@@ -110,12 +114,12 @@ class StaleAccountOperationError extends Error {
 }
 
 const MUTATING_TOOLS = new Set<ToolName>([
-  'start_workout', 'record_set', 'correct_set', 'undo_last_action',
+  'start_workout', 'select_exercise', 'record_set', 'correct_set', 'undo_last_action',
   'start_rest_timer', 'finish_workout', 'record_cardio',
 ]);
 
 const TOOL_NAMES = new Set<ToolName>([
-  'get_session_context', 'draft_workout', 'start_workout', 'record_set', 'correct_set',
+  'get_session_context', 'draft_workout', 'start_workout', 'select_exercise', 'record_set', 'correct_set',
   'undo_last_action', 'start_rest_timer', 'get_rest_status', 'finish_workout',
   'record_cardio', 'get_progress', 'show_panel', 'close_panel',
 ]);
@@ -254,6 +258,7 @@ const describeResult = (tool: ToolName, value: Record<string, unknown>): string 
     get_session_context: 'Saved workout context loaded.',
     draft_workout: 'Workout drafted. Nothing has been logged as completed.',
     start_workout: 'Workout started. Ready when you are.',
+    select_exercise: 'Active exercise updated.',
     record_set: 'Set saved.',
     correct_set: 'Set corrected.',
     undo_last_action: 'Last action undone.',
@@ -287,16 +292,6 @@ const downloadJson = (filename: string, value: unknown): void => {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(href);
-};
-
-const poseFor = (snapshot: CharacterControllerSnapshot): CharacterPose => {
-  if (snapshot.state === 'greeting') return 'wave';
-  if (snapshot.state === 'thinking') return 'wobble';
-  if (snapshot.state === 'resting') return 'balance';
-  if (snapshot.state === 'celebrating') return snapshot.gesture?.name === 'celebrating-little-mountain' ? 'balance' : 'pawtap';
-  if (snapshot.state === 'comforting' || snapshot.state === 'farewell') return 'wave';
-  if (snapshot.state === 'speaking') return snapshot.speechAmplitude > 0.22 ? 'pawtap' : 'wave';
-  return 'hero';
 };
 
 const statusLabel = (status: VoiceStatus): string => ({
@@ -604,11 +599,18 @@ export default function VoiceCompanionApp() {
     const next = result.data ?? {};
     contextRef.current = next;
     setContext(next);
+    const training = trainingContextFrom(next);
+    if (mode === 'cloud') {
+      const draft = training.draft;
+      plannedWorkoutRef.current = draft ? { title: String(draft.title || 'Training session'), exercises: draft.exercises, superset: draft.superset } : undefined;
+      setPlannedWorkout(plannedWorkoutRef.current);
+    }
+    voiceClientRef.current?.updateTrainingContext(training);
     const timer = restTimerFrom(next);
     const endsAt = stringValue(timer, 'endsAt', 'ends_at');
     setRestRemaining(endsAt ? Math.max(0, Math.ceil((Date.parse(endsAt) - Date.now()) / 1000)) : numberValue(timer, 'remainingSeconds', 'remaining_seconds') ?? 0);
     return next;
-  }, [captureAccountScope, rawToolCall, requireCurrentAccountScope]);
+  }, [captureAccountScope, mode, rawToolCall, requireCurrentAccountScope]);
 
   useEffect(() => {
     if (!profileReady || !mode) return;
@@ -657,8 +659,9 @@ export default function VoiceCompanionApp() {
     const sessionRecord = activeSessionFrom(ctx);
     const latestSet = setsFrom(ctx).at(-1);
     const operation = MUTATING_TOOLS.has(name) ? { operationKey: operationId } : {};
-    if (name === 'start_workout') return { ...args, ...operation, localDate: localDate(), timezone: localTimezone(), title: args.title ?? plannedWorkoutRef.current?.title ?? 'Training session', exercises: args.exercises ?? plannedWorkoutRef.current?.exercises ?? [] };
+    if (name === 'start_workout') return { ...args, ...operation, localDate: localDate(), timezone: localTimezone(), title: args.title ?? plannedWorkoutRef.current?.title ?? 'Training session', exercises: args.exercises ?? plannedWorkoutRef.current?.exercises ?? [], superset: args.superset ?? plannedWorkoutRef.current?.superset ?? false };
     if (name === 'record_set') {
+      if (mode === 'cloud') return { ...resolvedSetArguments(args, ctx), ...operation, completedAt: new Date().toISOString() };
       if (args.sameAgain) {
         if (!latestSet) throw new Error('Which completed set should I repeat?');
         const latestExerciseId = stringValue(latestSet, 'exerciseInstanceId', 'exercise_instance_id');
@@ -700,7 +703,7 @@ export default function VoiceCompanionApp() {
       };
     }
     return { ...args, ...operation };
-  }, []);
+  }, [mode]);
 
   const executeTool = useCallback(async (
     name: ToolName,
@@ -726,7 +729,7 @@ export default function VoiceCompanionApp() {
         const exercises = Array.isArray(args.exercises)
           ? args.exercises.map(asRecord).filter((item): item is Record<string, unknown> => Boolean(item))
           : [];
-        const draft = { title: String(args.title || 'Training session'), exercises };
+        const draft = { title: String(args.title || 'Training session'), exercises, superset: args.superset === true };
         plannedWorkoutRef.current = draft;
         setPlannedWorkout(draft);
       }
@@ -734,7 +737,8 @@ export default function VoiceCompanionApp() {
         controllerRef.current?.dispatch({ type: 'state.changed', state: 'ready' });
         controllerRef.current?.dispatch({ type: 'gesture.triggered', gesture: 'ready-paw-tap', operationKey: operationId });
       } else if (name === 'start_rest_timer') controllerRef.current?.dispatch({ type: 'state.changed', state: 'resting' });
-      const refreshed = MUTATING_TOOLS.has(name) ? await refreshContext() : undefined;
+      const refreshed = MUTATING_TOOLS.has(name) || (name === 'draft_workout' && mode === 'cloud') ? await refreshContext() : undefined;
+      if (refreshed && result.data) result.data.trainingContext = trainingContextFrom(refreshed);
       requireCurrentAccountScope(scope);
       if (name === 'finish_workout' && !result.duplicate) {
         const milestonesAfter = milestoneIdsFrom(refreshed ?? result.data ?? {});
@@ -873,13 +877,13 @@ export default function VoiceCompanionApp() {
       const startOperationId = options.operationId ? `${options.operationId}:start` : `${options.source}:${makeId()}`;
       const started = await executeTool(
         'start_workout',
-        { title: plannedWorkoutRef.current.title, exercises: plannedWorkoutRef.current.exercises },
+        { title: plannedWorkoutRef.current.title, exercises: plannedWorkoutRef.current.exercises, superset: plannedWorkoutRef.current.superset },
         { source: options.source, operationId: startOperationId },
       );
       const pendingStart = !started.ok && accountId && mode === 'cloud' && asRecord(started.data)?.pending;
       if (!started.ok && !pendingStart) return started;
 
-      const targetedArguments = targetSetToActiveContext(action.arguments, contextRef.current);
+      const targetedArguments = mode === 'cloud' ? resolvedSetArguments(action.arguments, contextRef.current) : targetSetToActiveContext(action.arguments, contextRef.current);
       if (!targetedArguments) throw new Error('The started workout context could not be recovered.');
       return executeTool(action.name, targetedArguments, options);
     }
@@ -889,6 +893,11 @@ export default function VoiceCompanionApp() {
   const submitManual = useCallback(async (value = manualText) => {
     const text = value.trim();
     if (!text) return;
+    if (voiceClientRef.current?.connected) {
+      setManualText('');
+      voiceClientRef.current.sendText(text);
+      return;
+    }
     setManualText(''); setManualBusy(true); addTurn('user', text);
     controllerRef.current?.dispatch({ type: 'state.changed', state: 'thinking' });
     const interpretation = interpretManualCommand(text);
@@ -924,15 +933,24 @@ export default function VoiceCompanionApp() {
     if (status === 'error') controllerRef.current?.dispatch({ type: 'connection.failed', code: 'realtime', message: 'Voice connection failed.', retryable: true });
   }, []);
 
-  const connectVoice = useCallback(async () => {
-    if (voiceClientRef.current) return;
+  const connectVoice = useCallback(async (auditionVoice?: AuditionVoice) => {
+    if (voiceClientRef.current) {
+      if (!auditionVoice) return;
+      await voiceClientRef.current.disconnect();
+      voiceClientRef.current = undefined;
+    }
     setMicDisclosure(false);
     if (mode !== 'cloud' || !session || !config?.realtimeConfigured) {
       setNotice('Live voice needs the configured Supabase and OpenAI preview. The keyboard demonstrator is ready now.');
       return;
     }
     const client = new KnuflRealtimeClient({
-      onStatus: onVoiceStatus,
+      onStatus: (status) => {
+        onVoiceStatus(status);
+        if (auditionVoice && status === 'idle') {
+          if (voiceClientRef.current === client) { voiceClientRef.current = undefined; setVoiceClientActive(false); }
+        }
+      },
       onAmplitude: (amplitude) => controllerRef.current?.dispatch({ type: 'speech.amplitude', value: amplitude }),
       onTranscript: (role, text) => { addTurn(role, text); if (role === 'assistant') setCaption(text); },
       onInterrupted: () => controllerRef.current?.dispatch({ type: 'conversation.interrupted' }),
@@ -951,7 +969,8 @@ export default function VoiceCompanionApp() {
     client.setMuted(true);
     setMuted(true);
     try {
-      await client.connect(session.access_token);
+      await refreshContext();
+      await client.connect(session.access_token, auditionVoice ? { auditionVoice, microphone: false } : {});
     } catch {
       if (voiceClientRef.current === client) {
         voiceClientRef.current = undefined;
@@ -959,7 +978,7 @@ export default function VoiceCompanionApp() {
       }
       // The client surfaced a privacy-safe error.
     }
-  }, [addTurn, config?.realtimeConfigured, mode, onVoiceStatus, runManualAction, session]);
+  }, [addTurn, config?.realtimeConfigured, mode, onVoiceStatus, refreshContext, runManualAction, session]);
 
   useEffect(() => () => { void voiceClientRef.current?.disconnect(); }, []);
   useEffect(() => {
@@ -1471,15 +1490,15 @@ export default function VoiceCompanionApp() {
   };
 
   return <main className={`voice-app voice-app--${character.state}`}><header className="voice-header"><button className="menu-button" aria-label="Open menu" aria-haspopup="dialog" aria-expanded={drawerOpen} onClick={() => setDrawer('account')}><span /><span /><span /></button><Brand compact /><button className={`sync-badge ${pending.length ? 'sync-badge--pending' : ''}`} aria-haspopup="dialog" aria-expanded={drawerOpen} onClick={() => setDrawer('account')}><span aria-hidden="true">{mode === 'cloud' ? pending.length ? '↻' : '●' : '○'}</span>{mode === 'cloud' ? pending.length ? `${pending.length} pending` : 'No pending changes' : 'Demo only'}</button></header>
-    <div className="demo-banner" role="note">Development character renderer · approved static poses driven by real app states · production lifelike rig still required</div>
+    <div className="demo-banner" role="note">Articulated 3D study · provisional model, not the final approved character</div>
     {fatalError && <div className="global-error" role="alert"><span>{fatalError}</span><button aria-label="Dismiss error" onClick={() => setFatalError('')}>×</button></div>}
     {notice && <div className="voice-toast" role="status"><span>{notice}</span><button aria-label="Dismiss" onClick={() => setNotice('')}>×</button></div>}
-    <section className="companion-stage" aria-label={`${companionName}, your training companion`}><div className="ambient ambient--one" /><div className="ambient ambient--two" /><button className={`voice-character voice-character--${character.state}`} style={{ '--speech': character.speechAmplitude, '--energy': character.energy } as CSSProperties} onClick={primaryVoiceAction} aria-label={`${primaryVoiceLabel} ${companionName}`}><span className="character-halo" /><Character pose={poseFor(character)} name={companionName} animated={character.motionMode === 'full'} /><span className="voice-rings" aria-hidden="true"><i /><i /><i /></span></button><div className={`voice-status voice-status--${displayedStatus}`} role="status" aria-live="polite"><span className="voice-status__dot" />{statusLabel(displayedStatus)}</div><div className="caption-card" aria-live="polite"><span className="caption-card__name">{companionName}</span><p>“{caption}”</p></div></section>
+    <section className="companion-stage" aria-label={`${companionName}, your training companion`}><div className="ambient ambient--one" /><div className="ambient ambient--two" /><button className={`voice-character voice-character--${character.state}`} onClick={primaryVoiceAction} aria-label={`${primaryVoiceLabel} ${companionName}`}><span className="character-halo" /><ArticulatedCharacter snapshot={character} name={companionName} /><span className="voice-rings" aria-hidden="true"><i /><i /><i /></span></button><div className={`voice-status voice-status--${displayedStatus}`} role="status" aria-live="polite"><span className="voice-status__dot" />{statusLabel(displayedStatus)}</div><div className="caption-card" aria-live="polite"><span className="caption-card__name">{companionName}</span><p>“{caption}”</p></div></section>
     {panel && <ContextPanel kind={panel} result={toolResult} planned={plannedWorkout} latestSet={latestSet} restSeconds={receiptRestSeconds} restRemaining={restRemaining} onClose={() => setPanel(null)} onRest={(seconds) => void executeTool('start_rest_timer', { durationSeconds: seconds })} onUndo={() => void executeTool('undo_last_action', {})} />}
     <section className="voice-controls" aria-label="Conversation controls"><div className="quick-prompts" aria-label="Try a command">{suggestedCommands.map((command) => <button key={command} disabled={manualBusy} onClick={() => void submitManual(command)}>{command}</button>)}</div><form className="manual-composer" aria-busy={manualBusy} onSubmit={(event) => { event.preventDefault(); void submitManual(); }}><label htmlFor="manual-command" className="sr-only">Type a workout command</label><input id="manual-command" value={manualText} disabled={manualBusy} onChange={(event) => setManualText(event.target.value)} placeholder="Type instead — e.g. First set done, eight reps" /><button type="submit" disabled={manualBusy || !manualText.trim()} aria-label="Send typed command">↑</button></form><div className="persistent-controls"><button className="talk-button" onClick={primaryVoiceAction}><span aria-hidden="true">{canInterrupt ? '◼' : '●'}</span>{primaryVoiceLabel}</button><button className="push-talk-button" disabled={!canTransmit} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); pushToTalk(true); }} onPointerUp={() => pushToTalk(false)} onPointerCancel={() => pushToTalk(false)} onBlur={() => pushToTalk(false)} onKeyDown={(event) => { if (!event.repeat && (event.key === ' ' || event.key === 'Enter')) pushToTalk(true); }} onKeyUp={(event) => { if (event.key === ' ' || event.key === 'Enter') pushToTalk(false); }}>Hold to talk</button><button onClick={() => { const next = !muted; setMuted(next); voiceClientRef.current?.setMuted(next); }} disabled={!canTransmit}>{muted ? 'Unmute' : 'Mute'}</button><button className="stop-button" onClick={() => void stopVoice()} disabled={!connected}>Stop</button></div></section>
     {micDisclosure && <div className="dialog-backdrop" role="presentation"><section ref={micDialogRef} className="permission-dialog" role="dialog" aria-modal="true" aria-labelledby="mic-title"><span className="permission-dialog__icon">●</span><p className="eyebrow">Before the mic starts</p><h2 id="mic-title">Talk with {companionName}</h2><p>When unmuted, your microphone audio is sent to OpenAI for the live conversation. Knufl does not store raw audio. You can interrupt, mute or stop at any time, and the keyboard remains available.</p>{!config.realtimeConfigured && <p className="configuration-note"><strong>Live voice is not configured on this preview.</strong><span>Continue to return to the keyboard demonstrator.</span></p>}<div className="dialog-actions"><Button onClick={() => void connectVoice()}>{config.realtimeConfigured && mode === 'cloud' ? 'Connect microphone controls' : 'Continue without voice'}</Button><Button variant="quiet" onClick={() => setMicDisclosure(false)}>Not now</Button></div></section></div>}
     {importPreview && <div className="dialog-backdrop import-dialog-backdrop" role="presentation"><section ref={importDialogRef} className="permission-dialog import-dialog" role="dialog" aria-modal="true" aria-labelledby="import-title"><p className="eyebrow">Review before restore</p><h2 id="import-title">Import {importPreview.companionName}’s progress?</h2><p>{importPreview.sessions} sessions · {importPreview.memories} memories · {importPreview.milestones} milestones</p><p>{importPreview.kind === 'cloud-account' ? 'Portable cloud account archive' : 'Original local progress export'}</p>{importPreview.duplicateSessions > 0 && <p>{importPreview.duplicateSessions} sessions already exist.</p>}{importPreview.alreadyImported && <p>This exact cloud archive is already restored.</p>}{Boolean(importPreview.conflicts) && <p className="form-error" role="alert">{importPreview.conflicts} conflicts need review; nothing will be overwritten.</p>}{importError && <p className="form-error" role="alert">{importError}</p>}<div className="dialog-actions"><Button onClick={() => void confirmImport()} disabled={importBusy || Boolean(importPreview.conflicts)}>{importPreview.alreadyImported ? 'Confirm existing restore' : 'Import this progress'}</Button><Button variant="quiet" disabled={importBusy} onClick={() => { importRequestRef.current = undefined; setImportPreview(undefined); setImportError(''); }}>Cancel</Button></div></section></div>}
-    {drawer && <div className="drawer-backdrop" role="presentation" onMouseDown={() => setDrawer(undefined)}><aside ref={menuDialogRef} className="app-drawer" role="dialog" aria-modal="true" aria-label="Knufl menu" onMouseDown={(event) => event.stopPropagation()}><header><Brand compact /><button aria-label="Close menu" onClick={() => setDrawer(undefined)}>×</button></header><nav aria-label="Account and training">{([['account', '○', 'Account'], ['plan', '◇', 'Plan'], ['history', '↺', 'Workout history'], ['progress', '↗', 'Progress'], ['memories', '✦', 'Memories'], ['settings', '⚙', 'Settings']] as const).map(([id, icon, label]) => <button key={id} className={drawer === id ? 'is-active' : ''} onClick={() => id === 'progress' ? void openProgress() : setDrawer(id)}><span>{icon}</span>{label}</button>)}</nav><div className="drawer-content">{drawer === 'account' && <AccountSection mode={mode} email={session?.user.email} pending={pending} conflicts={pendingConflicts} credits={practiceCredits} milestones={unlockedMilestones} onSignOut={() => void signOut()} />}{drawer === 'plan' && <PlanSection planned={plannedWorkout} recovered={recoveredPlan} active={activeSession} exercise={activeExercise} />}{drawer === 'history' && <HistorySection context={context} />}{drawer === 'memories' && <MemoriesSection context={context} demo={mode === 'demo' ? demoState : undefined} onSave={saveMemory} onDelete={deleteMemory} />}{drawer === 'settings' && <SettingsSection name={nameDraft} nameSaving={nameSaving} importBusy={importBusy} setName={setNameDraft} onSaveName={() => void saveName()} onExport={() => void exportAccount()} onImportFile={prepareImportFile} importError={importError} deleteArmed={deleteArmed} onArmDelete={() => setDeleteArmed(true)} onCancelDelete={() => setDeleteArmed(false)} onDelete={() => void deleteAccount()} />}</div></aside></div>}
+    {drawer && <div className="drawer-backdrop" role="presentation" onMouseDown={() => setDrawer(undefined)}><aside ref={menuDialogRef} className="app-drawer" role="dialog" aria-modal="true" aria-label="Knufl menu" onMouseDown={(event) => event.stopPropagation()}><header><Brand compact /><button aria-label="Close menu" onClick={() => setDrawer(undefined)}>×</button></header><nav aria-label="Account and training">{([['account', '○', 'Account'], ['plan', '◇', 'Plan'], ['history', '↺', 'Workout history'], ['progress', '↗', 'Progress'], ['memories', '✦', 'Memories'], ['settings', '⚙', 'Settings']] as const).map(([id, icon, label]) => <button key={id} className={drawer === id ? 'is-active' : ''} onClick={() => id === 'progress' ? void openProgress() : setDrawer(id)}><span>{icon}</span>{label}</button>)}</nav><div className="drawer-content">{drawer === 'settings' && Array.isArray(context.auditionVoices) && context.auditionVoices.length > 0 && <section className="settings-group"><p className="eyebrow">Owner-only voice audition</p><h3>Find the gentle giant</h3><p>Cedar is provisional. Each sample reads the same original lines in a fresh, capped one-minute session. No microphone or workout changes; ordinary voice allowance applies.</p><div className="audition-actions">{AUDITION_VOICES.map(voice => <Button key={voice} variant="secondary" disabled={voiceStatus === 'connecting'} onClick={() => { setDrawer(undefined); void connectVoice(voice); }}>Hear {voice}</Button>)}</div></section>}{drawer === 'account' && <AccountSection mode={mode} email={session?.user.email} pending={pending} conflicts={pendingConflicts} credits={practiceCredits} milestones={unlockedMilestones} onSignOut={() => void signOut()} />}{drawer === 'plan' && <PlanSection planned={plannedWorkout} recovered={recoveredPlan} active={activeSession} exercise={activeExercise} />}{drawer === 'history' && <HistorySection context={context} />}{drawer === 'memories' && <MemoriesSection context={context} demo={mode === 'demo' ? demoState : undefined} onSave={saveMemory} onDelete={deleteMemory} />}{drawer === 'settings' && <SettingsSection name={nameDraft} nameSaving={nameSaving} importBusy={importBusy} setName={setNameDraft} onSaveName={() => void saveName()} onExport={() => void exportAccount()} onImportFile={prepareImportFile} importError={importError} deleteArmed={deleteArmed} onArmDelete={() => setDeleteArmed(true)} onCancelDelete={() => setDeleteArmed(false)} onDelete={() => void deleteAccount()} />}</div></aside></div>}
   </main>;
 }
 

@@ -106,6 +106,9 @@ try {
   result(await a.client.from('preferences').insert({user_id:a.user.id,timezone:'UTC'}));
   const draft = await call(a,'draft_workout',{exercises:workout.exercises});
   assert.equal(draft.saved,false);
+  assert.equal(draft.draftSaved,true);
+  const recalledDraft = await call(a,'get_session_context');
+  assert.equal(recalledDraft.preferences.training_context.draft.exercises[0].name,'Bench press');
   assert.equal(result(await a.client.from('completed_sets').select('id')).length,0);
   passed('planning creates no completed sets');
   const started = await call(a,'start_workout',{...workout,operationKey:op()});
@@ -137,6 +140,7 @@ try {
   assert.equal(recovered.completedSets.length,1);
   assert.equal(recovered.completedSets[0].reps,6);
   assert.equal(recovered.latestRestTimer.ends_at,rest.timer.endsAt);
+  assert.equal(recovered.preferences.training_context.exerciseId,exerciseInstanceId);
   passed('independent Auth session recovers name, corrected set and exact rest deadline (API clients, not physical devices)');
   const progress = await call(a2,'get_progress',{kind:'strength',exercise:'Bench press',fromDate:day,toDate:day});
   assert.equal(progress.records.length,1);
@@ -149,6 +153,7 @@ try {
   assert.equal(noForeign.session,null);
   assert.equal(noForeign.completedSets.length,0);
   await call(b,'record_set',{...setArgs,operationKey:op()},404);
+  await call(b,'select_exercise',{operationKey:op(),exerciseInstanceId},404);
   await call(b,'record_set',{...setArgs,operationKey:op(),sessionId:bStarted.session.id},404);
   await call(b,'correct_set',{operationKey:op(),setId:recorded.set.id,expectedVersion:corrected.set.version,reps:999},404);
   await call(b,'start_rest_timer',{operationKey:op(),sessionId,durationSeconds:10},404);

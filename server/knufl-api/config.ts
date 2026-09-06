@@ -7,6 +7,7 @@ export interface KnuflServerConfig {
   openAiApiKey: string;
   realtimeModel: string;
   realtimeVoice: string;
+  previewOwnerId?: string;
   maxActiveRealtimeSessions: number;
   dailyRealtimeMinutes: number;
   maxRealtimeSessionMinutes: number;
@@ -31,7 +32,8 @@ export const readServerConfig = (
   supabaseServiceRoleKey: values.SUPABASE_SERVICE_ROLE_KEY?.trim() ?? '',
   openAiApiKey: values.OPENAI_API_KEY?.trim() ?? '',
   realtimeModel: values.KNUFL_REALTIME_MODEL?.trim() || 'gpt-realtime-2.1',
-  realtimeVoice: values.KNUFL_REALTIME_VOICE?.trim() || 'marin',
+  realtimeVoice: values.KNUFL_REALTIME_VOICE?.trim() || 'cedar',
+  previewOwnerId: values.KNUFL_PREVIEW_OWNER_ID?.trim() || undefined,
   maxActiveRealtimeSessions: boundedInteger(
     values.KNUFL_MAX_ACTIVE_REALTIME_SESSIONS,
     1,
