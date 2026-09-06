@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import ts from 'typescript';
 const origin='https://knufl-voice-companion.alcain.chatgpt.site';
+const focused = process.argv.includes('--focused');
 const input=createInterface({input:process.stdin,output:process.stdout,terminal:false});
 const secrets=JSON.parse(await input.question('Ready for credentials on hidden stdin:\n'));input.close();
 const opts={auth:{persistSession:false,autoRefreshToken:false}};
@@ -59,6 +60,18 @@ async function turn(text){tools=[];peak=0;finalReply=false;const done=new Promis
 document.querySelector('#run').onclick=async event=>{
  event.target.disabled=true;
  try{
+  if (${focused}) {
+   const plan={title:'Disposable superset',superset:true,exercises:[{name:'Bench Press',sets:3,reps:8,load:60,loadUnit:'kg',loadMode:'total'},{name:'Barbell Row',sets:3,reps:8,load:40,loadUnit:'kg',loadMode:'total'}]};
+   await tool('draft_workout',plan);
+   await tool('start_workout',{...plan,operationKey:'fixture:'+crypto.randomUUID(),localDate:new Date().toLocaleDateString('en-CA'),timezone:'Europe/London'});
+   show('SETUP: Superset plan fixture created through real tools; setup was not model-driven.');
+   await connect();
+   await turn('Eight done.');check(ctx.completedSets.length===0,'ambiguous superset does not save');
+   await turn('Do not log that ambiguous report. Switch to barbell rows for my next set.');check(trainingContextFrom(ctx).activeExercise?.name==='Barbell Row','model explicitly switches the persisted exercise');
+   await turn('Eight done.');check(ctx.completedSets.length===1&&ctx.completedSets[0].load===40&&ctx.completedSets[0].reps===8,'switched exercise saves eight at its own forty-kilo load');
+   await turn('What is my actual barbell row progress?');check(tools.includes('get_progress'),'progress reply follows the real progress tool');
+   show('FOCUSED MODEL CHECKS PASSED.');await voice.disconnect();return;
+  }
   await connect();
   await turn('Plan bench press, three sets of eight at sixty kilos total, with ninety seconds rest.');
   check(!ctx.completedSets.length,'planning logs no completed sets');
@@ -82,7 +95,7 @@ document.querySelector('#reconnect').onclick=async event=>{
   await turn('First set done, eight reps.');check(ctx.completedSets.length===0,'ambiguous superset report is not assigned to an exercise');
   await turn('Bench press. I completed eight reps.');check(ctx.completedSets.length===1&&ctx.completedSets[0].load===60,'explicit superset exercise resolves bench');
   await turn('Eight done.');check(ctx.completedSets.length===1,'next superset report still requires an explicit exercise');
-  await turn('Switch to barbell rows.');check(trainingContextFrom(ctx).activeExercise?.name.toLowerCase().includes('row'),'explicit switch persists the active exercise');
+  await turn('Do not log that ambiguous report. Switch to barbell rows for my next set.');check(trainingContextFrom(ctx).activeExercise?.name.toLowerCase().includes('row'),'explicit switch persists the active exercise');
   await turn('Eight done.');check(ctx.completedSets.length===2&&ctx.completedSets[1].load===40,'switched exercise inherits its own planned load');
   show('ALL MODEL CONVERSATION CHECKS PASSED.');await voice.disconnect();
  }catch(e){show('FAIL: '+e.message);await voice?.disconnect();}
@@ -95,7 +108,10 @@ const server=createServer(async(req,res)=>{
   if(req.headers.host!==localHost||(req.method==='POST'&&req.headers.origin!=='http://'+localHost)){res.writeHead(403).end();return;}
   if(req.method==='GET'&&req.url==='/'){res.writeHead(200,{'Content-Type':'text/html'}).end(html);return;}
   if(req.method==='GET'&&['/client.js','/context.js'].includes(req.url)){
-    const source=await readFile(req.url==='/client.js'?'lib/realtime-client.ts':'lib/training-context.ts','utf8');
+    let source=await readFile(req.url==='/client.js'?'lib/realtime-client.ts':'lib/training-context.ts','utf8');
+    // Harness-only protocol diagnostics: status/finish reason and output kinds,
+    // never audio, credentials or owner transcripts. No production telemetry.
+    if(req.url==='/client.js') source=source.replace('switch (event.type) {', `if (event.type === 'response.done') fetch('/event', {method:'POST',body:'PROTOCOL '+JSON.stringify({status:event.response?.status,details:event.response?.status_details,output:event.response?.output?.map(item=>({type:item.type,status:item.status}))})});\n switch (event.type) {`);
     res.writeHead(200,{'Content-Type':'text/javascript'}).end(ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText);return;
   }
   let body='';for await(const chunk of req){body+=chunk;if(body.length>150000)throw Error('Body too large');}
