@@ -474,7 +474,7 @@ const selectExercise = async (context: ToolExecutionContext, args: ToolArguments
     if (!session || session.status !== 'active') throw new ApiError(409,'conflict','Start the workout before selecting an exercise.');
     const matches = rows(ctx.exercises).filter(e => args.exerciseInstanceId
       ? e.id === args.exerciseInstanceId : exerciseNameMatches(String(e.display_name), args.exercise ?? ''));
-    if (!args.clear && matches.length !== 1) throw new ApiError(400,'validation_error','Which exercise should be active?');
+    if (!args.clear && matches.length !== 1) throw new ApiError(args.exerciseInstanceId ? 404 : 400,args.exerciseInstanceId ? 'not_found' : 'validation_error','Which exercise should be active?');
     const state = await putTrainingState(context, { sessionId: session.id, exerciseId: args.clear ? null : matches[0].id });
     return { value: { saved: true, trainingContext: trainingContextFrom({ ...ctx, preferences: { ...(ctx.preferences as DataRow), training_context: state } }) } };
   });

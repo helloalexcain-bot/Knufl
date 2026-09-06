@@ -85,13 +85,14 @@ export class KnuflRealtimeClient {
   #lastContextSent = '';
   #outputPlaying = false;
   #audition = false;
+  #responseInProgress = false;
 
   constructor(events: RealtimeClientEvents) {
     this.#events = events;
   }
 
   get connected(): boolean {
-    return this.#peer?.connectionState === 'connected';
+    return this.#peer?.connectionState === 'connected' && this.#channel?.readyState === 'open';
   }
 
   async connect(accessToken: string, options: { auditionVoice?: AuditionVoice; microphone?: boolean } = {}): Promise<void> {
@@ -295,6 +296,7 @@ export class KnuflRealtimeClient {
       type: 'conversation.item.create',
       item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: value }] },
     }));
+    this.#responseInProgress = true;
     this.#channel.send(JSON.stringify({ type: 'response.create' }));
     this.#events.onStatus('thinking');
   }
@@ -303,7 +305,7 @@ export class KnuflRealtimeClient {
     this.#outputPlaying = false;
     this.#responseGeneration += 1;
     if (this.#channel?.readyState === 'open') {
-      this.#channel.send(JSON.stringify({ type: 'response.cancel' }));
+      if (this.#responseInProgress) this.#channel.send(JSON.stringify({ type: 'response.cancel' }));
       this.#channel.send(JSON.stringify({ type: 'output_audio_buffer.clear' }));
     }
     this.#events.onInterrupted?.();
@@ -324,6 +326,7 @@ export class KnuflRealtimeClient {
 
   async #teardownConnection(): Promise<void> {
     this.#outputPlaying = false;
+    this.#responseInProgress = false;
     const voiceSessionId = this.#voiceSessionId;
     const accessToken = this.#accessToken;
     this.#voiceSessionId = undefined;
@@ -382,6 +385,7 @@ export class KnuflRealtimeClient {
         this.#events.onStatus('thinking');
         break;
       case 'response.created':
+        this.#responseInProgress = true;
         this.#responseGeneration += 1;
         this.#turnStartedAt ??= performance.now();
         this.#events.onStatus('thinking');
@@ -408,6 +412,7 @@ export class KnuflRealtimeClient {
         if (this.#audition) void this.disconnect().then(() => this.#events.onStatus('idle'));
         break;
       case 'response.done':
+        this.#responseInProgress = false;
         // Generation often finishes seconds before WebRTC playout does.
         if (!this.#outputPlaying) this.#events.onStatus(this.#muted ? 'mic-off' : 'listening');
         this.#emitAssistantTranscript(event);
@@ -465,6 +470,7 @@ export class KnuflRealtimeClient {
         output: JSON.stringify(output),
       },
     }));
+    this.#responseInProgress = true;
     channel.send(JSON.stringify({ type: 'response.create' }));
   }
 

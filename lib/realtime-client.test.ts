@@ -175,6 +175,25 @@ test('an audition opens no microphone and selects a fresh server-checked voice',
   }finally{restore();}
 });
 
+test('a connected peer is not ready for commands until the data channel opens', async () => {
+  const peer = new FakePeerConnection();
+  const restore = installBrowserMocks({
+    getUserMedia: async () => fakeStream().stream,
+    createPeer: () => peer,
+    fetch: async () => new Response('answer-sdp'),
+  });
+  const client = new KnuflRealtimeClient(clientEvents().events);
+  try {
+    await client.connect('test');
+    peer.connectionState = 'connected';
+    assert.equal(client.connected, false);
+    peer.channel.open();
+    assert.equal(client.connected, true);
+    await client.disconnect();
+    assert.equal(client.connected, false);
+  } finally { restore(); }
+});
+
 test('cancelled and incomplete Realtime responses cannot authorize tools', () => {
   for (const status of ['cancelled', 'incomplete', 'failed']) {
     assert.deepEqual(completedFunctionCallsFrom({
@@ -434,7 +453,7 @@ test('interrupt invalidates a slow tool result before it can request more speech
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     const sentTypes = peer.channel.sent.map((value) => (JSON.parse(value) as { type: string }).type);
-    assert.deepEqual(sentTypes, ['response.cancel', 'output_audio_buffer.clear']);
+    assert.deepEqual(sentTypes, ['output_audio_buffer.clear'], 'the completed tool response needs no invalid generation cancellation');
     assert.equal(sentTypes.includes('conversation.item.create'), false);
     assert.equal(sentTypes.filter((type) => type === 'response.create').length, 0);
     assert.equal(statuses.at(-1), 'listening');

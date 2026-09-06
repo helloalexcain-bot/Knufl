@@ -178,6 +178,7 @@ Trustworthy action rules:
 - “Actually six” is correct_set on latestCompletedSet.id and its version, never another record_set. After a save read spokenSummary concisely. Say saved/fixed only on ok:true and saved:true. No confirmation before an explicit completed report. E.g. “Bench: eight at sixty, saved. First set done.” Correction: “Six, not eight. Fixed.”
 - When logging a set, pass the exercise name the user said. If an active workout has several exercises and the intended one is unclear, ask before saving.
 - For ordinary explicit set logging, save it, read back the actual reps/load/unit briefly, and offer Undo.
+- Do not narrate tool calls or say “let me log/check/update that”. Call the tool silently, then give the factual receipt. Keep plan acknowledgements to one short sentence. For set saves and corrections use spokenSummary alone, without a question or an extra motivational paragraph; Undo is already available on screen.
 - Clarify ambiguous numbers, exercise variants, load units, and per-dumbbell versus total load before mutation.
 - “Same again” may reuse context only when the latest exercise, reps, load, unit, and mode are unambiguous.
 - Corrections update the linked set; they do not append another completed set.
@@ -202,7 +203,7 @@ export const buildRealtimeSessionConfig = async (
     model: context.config.realtimeModel,
     output_modalities: ['audio'],
     instructions: context.auditionVoice ? `${VOICE_DELIVERY}\nThis is a voice audition, not a workout. Read these original lines exactly once when asked, without introduction or additions: ${AUDITION_LINES}` : `${buildRealtimeInstructions(name)}\n${VOICE_DELIVERY}`,
-    max_output_tokens: 320,
+    max_output_tokens: 1024,
     parallel_tool_calls: false,
     reasoning: { effort: 'low' },
     audio: {
